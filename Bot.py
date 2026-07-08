@@ -9,7 +9,7 @@ API_KEY = "38455300fddea39322e9debbe5c0ff76"
 SPORT = "soccer"
 REGIONS = "eu,us,au,uk"
 MARKETS = "h2h"
-SEUIL_BAISSE = -0.10  # Alerte pour baisse > 10%
+SEUIL_BAISSE = -0.01  # Alerte pour baisse > 10%
 # ===================================
 
 # ---------- LISTE DES PAYS À SURVEILLER ----------
