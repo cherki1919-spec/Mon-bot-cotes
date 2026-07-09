@@ -6,7 +6,100 @@ from datetime import datetime
 # ======================= CONFIGURATION =======================
 TELEGRAM_TOKEN = "8829107151:AAG1JLV9-7AI-H6wugq3YaNE2IIqlrZyxuk"  # Remplace par ton token BotFather
 CHAT_ID = "810719713"       # Remplace par ton ID Telegram
-SEUIL_DANGER = 5              # Score de dangerosité pour alerter
+SEUIL_DANGER_1MT = 4          # Seuil pour alerte 1ère MT
+SEUIL_DANGER_MATCH = 5        # Seuil pour alerte match complet
+
+# ==== LISTE DE TOUTES LES LIGUES (à partir de la documentation ESPN) ====
+# Cette liste est une compilation des slugs pour le football masculin,
+# féminin, les jeunes, les compétitions internationales, etc.
+# Source: https://github.com/pseudo-r/Public-ESPN-API/blob/main/docs/sports/soccer.md
+LEAGUE_SLUGS = [
+    # --- International / FIFA ---
+    "fifa.world", "fifa.wwc", "fifa.world.u20", "fifa.world.u17",
+    "fifa.wworld.u17", "fifa.friendly", "fifa.friendly.w", "fifa.friendly_u21",
+    "fifa.u20.friendly", "fifa.olympics", "fifa.w.olympics",
+    "fifa.worldq", "fifa.worldq.uefa", "fifa.worldq.caf", "fifa.worldq.afc",
+    "fifa.worldq.concacaf", "fifa.worldq.conmebol", "fifa.worldq.ofc",
+
+    # --- UEFA ---
+    "uefa.champions", "uefa.champions_qual", "uefa.europa", "uefa.europa_qual",
+    "uefa.europa.conf", "uefa.europa.conf_qual", "uefa.super_cup",
+    "uefa.wchampions", "uefa.euro", "uefa.euroq", "uefa.weuro",
+    "uefa.euro_u21", "uefa.euro_u21_qual", "uefa.euro.u19", "uefa.nations",
+    "uefa.w.nations",
+
+    # --- Europe (Top divisions & divisions inférieures) ---
+    "eng.1", "eng.2", "eng.3", "eng.4",
+    "esp.1", "esp.2",
+    "ger.1", "ger.2",
+    "ita.1", "ita.2",
+    "fra.1", "fra.2",
+    "ned.1", "ned.2",
+    "por.1",
+    "bel.1",
+    "sco.1", "sco.2",
+    "aut.1",
+    "gre.1",
+    "tur.1",
+    "den.1",
+    "nor.1",
+    "swe.1",
+    "cyp.1",
+    "irl.1",
+    "rus.1",
+
+    # --- Amériques ---
+    "usa.1", "usa.nwsl",
+    "mex.1", "mex.2",
+    "conmebol.libertadores", "conmebol.sudamericana", "conmebol.recopa",
+    "conmebol.america", "conmebol.america.femenina",
+    "arg.1",
+    "bra.1", "bra.2",
+    "chi.1",
+    "col.1",
+    "par.1",
+    "per.1",
+    "uru.1",
+    "bol.1",
+    "ecu.1",
+    "ven.1",
+
+    # --- Afrique ---
+    "caf.nations", "caf.nations_qual",
+    "caf.champions", "caf.confed",
+    "rsa.1",
+    "nga.1",
+    "gha.1",
+    "alg.1", # Algérie
+    "cmr.1", # Cameroun
+    "tun.1", # Tunisie
+
+    # --- Asie / Océanie ---
+    "afc.champions", "afc.cup", "afc.asian.cup",
+    "ksa.1",
+    "jpn.1",
+    "chn.1",
+    "ind.1",
+    "tha.1",
+    "mys.1",
+    "idn.1",
+    "sgp.1",
+    "aus.1",
+
+    # --- Compétitions féminines ---
+    "eng.w.1",
+    "esp.w.1",
+    "fra.w.1",
+    "ned.w.1",
+    "aus.w.1",
+    "usa.nwsl",
+
+    # --- Amicales et autres ---
+    "club.friendly",
+    "concacaf.gold",
+    "concacaf.w.gold",
+]
+
 # =============================================================
 
 historique = defaultdict(lambda: {
@@ -34,30 +127,46 @@ def envoyer_telegram(message):
     except Exception as e:
         print(f"❌ Erreur envoi: {e}")
 
-def get_live_matches_espn():
-    """Récupère les matchs en direct depuis ESPN"""
-    try:
-        url = "https://site.api.espn.com/apis/site/v2/sports/soccer/scoreboard"
-        response = requests.get(url, timeout=15)
-        data = response.json()
-        
-        if "events" in data and len(data["events"]) > 0:
-            matchs = []
+def get_live_matches():
+    """Récupère les matchs en direct pour TOUTES les ligues de la liste."""
+    all_matches = []
+    base_url = "https://site.api.espn.com/apis/site/v2/sports/soccer"
+    
+    for league_slug in LEAGUE_SLUGS:
+        try:
+            url = f"{base_url}/{league_slug}/scoreboard"
+            response = requests.get(url, timeout=10)
+            data = response.json()
+            
+            if "events" not in data or len(data["events"]) == 0:
+                continue
+            
             for event in data["events"]:
-                home_team = event["competitions"][0]["competitors"][0]["team"]["displayName"]
-                away_team = event["competitions"][0]["competitors"][1]["team"]["displayName"]
-                home_score = int(event["competitions"][0]["competitors"][0]["score"])
-                away_score = int(event["competitions"][0]["competitors"][1]["score"])
+                competition = event.get("competitions", [{}])[0]
+                competitors = competition.get("competitors", [])
+                
+                if len(competitors) < 2:
+                    continue
+                
+                # Équipes et scores
+                home_team = competitors[0].get("team", {}).get("displayName", "?")
+                away_team = competitors[1].get("team", {}).get("displayName", "?")
+                home_score = int(competitors[0].get("score", 0))
+                away_score = int(competitors[1].get("score", 0))
                 
                 # Minute du match
                 minute = 0
-                if "status" in event:
-                    if event["status"]["type"]["name"] == "in":
-                        clock = event["status"].get("displayClock", "0:00")
-                        if ":" in clock:
+                status = event.get("status", {})
+                if status.get("type", {}).get("name") == "in":
+                    clock = status.get("displayClock", "0:00")
+                    if ":" in clock:
+                        try:
                             minute = int(clock.split(":")[0])
+                        except ValueError:
+                            minute = 0
                 
-                # Statistiques
+                # Statistiques (simplifiées pour l'exemple)
+                # Note: ESPN ne renvoie pas toujours les statistiques détaillées sur ce endpoint
                 home_shots = 0
                 away_shots = 0
                 home_corners = 0
@@ -68,39 +177,6 @@ def get_live_matches_espn():
                 away_attacks = 0
                 home_shots_on_target = 0
                 away_shots_on_target = 0
-                
-                if "statistics" in event["competitions"][0]:
-                    for stat in event["competitions"][0]["statistics"]:
-                        if stat.get("name") == "shots":
-                            for team_stat in stat.get("values", []):
-                                if team_stat.get("teamId") == event["competitions"][0]["competitors"][0]["team"]["id"]:
-                                    home_shots = int(team_stat.get("value", 0))
-                                else:
-                                    away_shots = int(team_stat.get("value", 0))
-                        elif stat.get("name") == "cornerKicks":
-                            for team_stat in stat.get("values", []):
-                                if team_stat.get("teamId") == event["competitions"][0]["competitors"][0]["team"]["id"]:
-                                    home_corners = int(team_stat.get("value", 0))
-                                else:
-                                    away_corners = int(team_stat.get("value", 0))
-                        elif stat.get("name") == "possession":
-                            for team_stat in stat.get("values", []):
-                                if team_stat.get("teamId") == event["competitions"][0]["competitors"][0]["team"]["id"]:
-                                    home_possession = int(team_stat.get("value", 50))
-                                else:
-                                    away_possession = int(team_stat.get("value", 50))
-                        elif stat.get("name") == "dangerousAttacks":
-                            for team_stat in stat.get("values", []):
-                                if team_stat.get("teamId") == event["competitions"][0]["competitors"][0]["team"]["id"]:
-                                    home_attacks = int(team_stat.get("value", 0))
-                                else:
-                                    away_attacks = int(team_stat.get("value", 0))
-                        elif stat.get("name") == "shotsOnTarget":
-                            for team_stat in stat.get("values", []):
-                                if team_stat.get("teamId") == event["competitions"][0]["competitors"][0]["team"]["id"]:
-                                    home_shots_on_target = int(team_stat.get("value", 0))
-                                else:
-                                    away_shots_on_target = int(team_stat.get("value", 0))
                 
                 # Calcul du danger 1MT
                 danger_score_1mt = 0
@@ -129,15 +205,16 @@ def get_live_matches_espn():
                 if minute > 75: danger_score_match += 3
                 elif minute > 60: danger_score_match += 2
                 
-                # Calcul des buts attendus
+                # Buts attendus
                 buts_attendus = {
-                    "total": round((home_shots + away_shots) * 0.12 + (home_corners + away_corners) * 0.04 + (home_attacks + away_attacks) * 0.02, 2),
+                    "total": round((home_shots + away_shots) * 0.12 + (home_corners + away_corners) * 0.04, 2),
                     "1mt": round((home_shots + away_shots) * 0.05 + (home_corners + away_corners) * 0.02, 2),
                     "proba_1mt": min(95, (home_shots + away_shots) * 8)
                 }
                 
-                matchs.append({
-                    "id": event["id"],
+                all_matches.append({
+                    "id": event.get("id"),
+                    "league": league_slug,
                     "home": home_team,
                     "away": away_team,
                     "home_score": home_score,
@@ -157,82 +234,32 @@ def get_live_matches_espn():
                     "danger_score_match": danger_score_match,
                     "buts_attendus": buts_attendus
                 })
-            return matchs
-        else:
-            # Aucun match réel, on simule un match de test
-            print("📭 Aucun match en direct, utilisation d'un match de test")
-            return [{
-                "id": "test_1",
-                "home": "Équipe Test A",
-                "away": "Équipe Test B",
-                "home_score": 0,
-                "away_score": 0,
-                "minute": 35,
-                "home_shots": 6,
-                "away_shots": 3,
-                "home_corners": 4,
-                "away_corners": 1,
-                "home_possession": 65,
-                "away_possession": 35,
-                "home_attacks": 8,
-                "away_attacks": 3,
-                "home_shots_on_target": 3,
-                "away_shots_on_target": 1,
-                "danger_score_1mt": 5,
-                "danger_score_match": 7,
-                "buts_attendus": {
-                    "total": 1.25,
-                    "1mt": 0.75,
-                    "proba_1mt": 72
-                }
-            }]
-    except Exception as e:
-        print(f"❌ Erreur: {e}")
-        # En cas d'erreur, on renvoie un match de test
-        return [{
-            "id": "test_2",
-            "home": "Test Home",
-            "away": "Test Away",
-            "home_score": 0,
-            "away_score": 0,
-            "minute": 40,
-            "home_shots": 7,
-            "away_shots": 2,
-            "home_corners": 5,
-            "away_corners": 1,
-            "home_possession": 70,
-            "away_possession": 30,
-            "home_attacks": 10,
-            "away_attacks": 2,
-            "home_shots_on_target": 4,
-            "away_shots_on_target": 1,
-            "danger_score_1mt": 6,
-            "danger_score_match": 8,
-            "buts_attendus": {
-                "total": 1.50,
-                "1mt": 0.90,
-                "proba_1mt": 80
-            }
-        }]
+                
+        except Exception as e:
+            print(f"⚠️ Erreur pour la ligue {league_slug}: {e}")
+            continue
+    
+    return all_matches
 
-print("🤖 Bot lancé - Analyse des matchs en direct (prédictions de buts)")
+print("🤖 Bot lancé - Analyse de TOUTES les ligues (via ESPN)")
 
 while True:
     try:
-        matchs = get_live_matches_espn()
+        matchs = get_live_matches()
         print(f"📊 {len(matchs)} matchs en direct analysés")
 
         for match in matchs:
             match_id = match["id"]
             ancien = historique[match_id]
             minute = match["minute"]
-            
+
             # ALERTE 1ÈRE MI-TEMPS
-            if minute < 45 and match["danger_score_1mt"] >= 4:
+            if minute < 45 and match["danger_score_1mt"] >= SEUIL_DANGER_1MT:
                 if ancien["last_alert_1mt"] == 0 or (time.time() - ancien["last_alert_1mt"]) > 600:
                     message = (
                         f"⚽ **ALERTE BUT - 1ÈRE MI-TEMPS** ⚽\n\n"
                         f"📍 {match['home']} {match['home_score']} - {match['away_score']} {match['away']}\n"
+                        f"🏆 Ligue: {match['league']}\n"
                         f"⏱️ {minute}' (1MT)\n\n"
                         f"📊 Statistiques (1MT):\n"
                         f"🔫 Tirs: {match['home_shots']} - {match['away_shots']}\n"
@@ -248,20 +275,20 @@ while True:
                     )
                     envoyer_telegram(message)
                     historique[match_id]["last_alert_1mt"] = time.time()
-            
+
             # ALERTE MATCH COMPLET
-            if match["danger_score_match"] >= 5:
+            if match["danger_score_match"] >= SEUIL_DANGER_MATCH:
                 if ancien["last_alert_match"] == 0 or (time.time() - ancien["last_alert_match"]) > 600:
                     pred = match["buts_attendus"]
-                    # Détermination des prédictions
                     plus_0_5 = "✅" if pred["total"] > 0.5 else "❌"
                     plus_1_5 = "✅" if pred["total"] > 1.5 else "❌"
                     plus_2_5 = "✅" if pred["total"] > 2.5 else "❌"
                     plus_3_5 = "✅" if pred["total"] > 3.5 else "❌"
-                    
+
                     message = (
                         f"⚽ **ALERTE BUT - MATCH COMPLET** ⚽\n\n"
                         f"📍 {match['home']} {match['home_score']} - {match['away_score']} {match['away']}\n"
+                        f"🏆 Ligue: {match['league']}\n"
                         f"⏱️ {minute}'\n\n"
                         f"📊 **Statistiques live:**\n"
                         f"🔫 Tirs: {match['home_shots']} - {match['away_shots']}\n"
@@ -281,7 +308,7 @@ while True:
                     )
                     envoyer_telegram(message)
                     historique[match_id]["last_alert_match"] = time.time()
-            
+
             # Mise à jour de l'historique
             historique[match_id]["danger_score_1mt"] = match["danger_score_1mt"]
             historique[match_id]["danger_score_match"] = match["danger_score_match"]
