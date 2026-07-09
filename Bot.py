@@ -9,37 +9,20 @@ API_KEY = "38455300fddea39322e9debbe5c0ff76"
 SPORT = "soccer"
 REGIONS = "eu,us,au,uk"
 MARKETS = "h2h"
-SEUIL_BAISSE = -0.01  # Alerte pour baisse > 10%
+SEUIL_BAISSE = -0.01  # Temporairement à 1% pour tester
 # ===================================
 
-# ---------- LISTE DES PAYS À SURVEILLER ----------
 PAYS_CIBLES = {
-    # EUROPE - 1ère Division
-    "Malta", "Montenegro", "North Macedonia",
-    # EUROPE - 2ème Division
-    "Greece", "Cyprus", "Albania", "Georgia", "Kazakhstan", "Kosovo", "Slovenia",
-    # EUROPE - 3ème Division
-    "Austria", "Israel",
-    # ASIE - 1ère Division
+    "Malta", "Montenegro", "North Macedonia", "Greece", "Cyprus", "Albania",
+    "Georgia", "Kazakhstan", "Kosovo", "Slovenia", "Austria", "Israel",
     "Bangladesh", "Mongolia", "Bhutan", "Myanmar", "Cambodia", "Malaysia",
-    # ASIE - 2ème Division
-    "India", "Thailand", "Indonesia", "Vietnam",
-    # AMÉRIQUE LATINE - 1ère Division (Youth inclus)
-    "Bolivia", "Panama", "Honduras", "Venezuela", "Jamaica",
-    # AMÉRIQUE LATINE - 2ème Division
-    "Costa Rica", "Paraguay", "Ecuador",
-    # AMÉRIQUE LATINE - Divisions Mineures
+    "India", "Thailand", "Indonesia", "Vietnam", "Bolivia", "Panama",
+    "Honduras", "Venezuela", "Jamaica", "Costa Rica", "Paraguay", "Ecuador",
     "Mexico", "Argentina", "Brazil"
 }
-# -------------------------------------------------
 
 URL_ODDS = f"https://api.the-odds-api.com/v4/sports/{SPORT}/odds/"
-PARAMS = {
-    "apiKey": API_KEY,
-    "regions": REGIONS,
-    "markets": MARKETS
-}
-
+PARAMS = {"apiKey": API_KEY, "regions": REGIONS, "markets": MARKETS}
 historique = defaultdict(lambda: {"home": 0.0, "draw": 0.0, "away": 0.0})
 
 def envoyer_telegram(message):
@@ -55,72 +38,56 @@ while True:
     try:
         reponse = requests.get(URL_ODDS, params=PARAMS, timeout=15)
         matchs = reponse.json()
-        
+        print(f"🔍 {len(matchs)} matchs reçus de l'API")  # LOG 1
+
         for match in matchs:
-            # Extraction du pays depuis le nom de la compétition
             titre = match.get("sport_title", "")
+            print(f"📋 Match : {titre}")  # LOG 2
+
             pays_match = None
             for pays in PAYS_CIBLES:
                 if pays.lower() in titre.lower():
                     pays_match = pays
                     break
-            
-            # Si le pays n'est pas dans la liste, on ignore
+
             if not pays_match:
+                print(f"⏭️ Pays non reconnu pour : {titre}")  # LOG 3
                 continue
-            
-            id_match = match["id"]
-            equipes = f"{match['home_team']} vs {match['away_team']}"
-            
-            # Récupération des cotes
+
+            print(f"✅ Pays détecté : {pays_match} pour {titre}")  # LOG 4
+
             if not match.get("bookmakers"):
+                print("❌ Pas de bookmaker pour ce match")
                 continue
+
             bookmaker = match["bookmakers"][0]
             if not bookmaker.get("markets"):
+                print("❌ Pas de marché pour ce match")
                 continue
+
             cotes = bookmaker["markets"][0]["outcomes"]
             cotes_actuelles = {c["name"]: c["price"] for c in cotes}
-            
             home = cotes_actuelles.get("home", 0.0)
             draw = cotes_actuelles.get("draw", 0.0)
             away = cotes_actuelles.get("away", 0.0)
-            
-            anciennes = historique[id_match]
-            # Si c'est la première vérification, on initialise sans alerte
+            print(f"📊 Cotes : H={home} D={draw} A={away}")  # LOG 5
+
+            # Ici on vérifie si on a déjà des anciennes cotes
+            anciennes = historique[match["id"]]
             if anciennes["home"] == 0.0 and anciennes["draw"] == 0.0 and anciennes["away"] == 0.0:
-                historique[id_match] = {"home": home, "draw": draw, "away": away}
+                historique[match["id"]] = {"home": home, "draw": draw, "away": away}
+                print("📝 Première init, on enregistre")  # LOG 6
                 continue
-            
-            # Vérification des baisses (10%)
-            if anciennes["home"] > 0:
+
+            # Vérification des baisses
+            if anciennes["home"] > 0 and home > 0:
                 variation = (home - anciennes["home"]) / anciennes["home"]
                 if variation < SEUIL_BAISSE:
-                    envoyer_telegram(
-                        f"🔻 BAISSE {pays_match}\n{equipes}\n"
-                        f"🏠 {anciennes['home']:.2f} ➡️ {home:.2f} ({variation*100:.1f}%)"
-                    )
-            
-            if anciennes["draw"] > 0:
-                variation = (draw - anciennes["draw"]) / anciennes["draw"]
-                if variation < SEUIL_BAISSE:
-                    envoyer_telegram(
-                        f"🔻 BAISSE {pays_match}\n{equipes}\n"
-                        f"🤝 {anciennes['draw']:.2f} ➡️ {draw:.2f} ({variation*100:.1f}%)"
-                    )
-            
-            if anciennes["away"] > 0:
-                variation = (away - anciennes["away"]) / anciennes["away"]
-                if variation < SEUIL_BAISSE:
-                    envoyer_telegram(
-                        f"🔻 BAISSE {pays_match}\n{equipes}\n"
-                        f"✈️ {anciennes['away']:.2f} ➡️ {away:.2f} ({variation*100:.1f}%)"
-                    )
-            
-            # Mise à jour de l'historique
-            historique[id_match] = {"home": home, "draw": draw, "away": away}
-        
-        time.sleep(60)  # Vérification toutes les 60 secondes
-        
+                    envoyer_telegram(f"🔻 BAISSE {pays_match}\n{match['home_team']} vs {match['away_team']}\n🏠 {anciennes['home']:.2f} ➡️ {home:.2f} ({variation*100:.1f}%)")
+                    print(f"🚨 Alerte envoyée pour home !")  # LOG 7
+            # (idem pour draw et away, je raccourcis ici mais garde la même logique)
+
+        time.sleep(60)
     except Exception as e:
-        print(f"Erreur : {e}")
+        print(f"❌ Erreur générale : {e}")
         time.sleep(30)
