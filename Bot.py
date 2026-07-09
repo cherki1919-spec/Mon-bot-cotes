@@ -4,9 +4,9 @@ from datetime import datetime
 from collections import defaultdict
 
 # ======================= CONFIGURATION =======================
-TELEGRAM_TOKEN = "8829107151:AAG1JLV9-7AI-H6wugq3YaNE2IIqlrZyxuk"                # Ton token BotFather
-CHAT_ID = "810719713"                    # Ton ID Telegram
-ODDS_API_KEY = "a81c1c5a671c6f3082dfd2fc65d2db11546154b0ba427abaefbe7b13458efdbd"          # Ta clé Odds-API.io
+TELEGRAM_TOKEN = "8829107151:AAG1JLV9-7AI-H6wugq3YaNE2IIqlrZyxuk"
+CHAT_ID = "810719713"
+ODDS_API_KEY = "a81c1c5a671c6f3082dfd2fc65d2db11546154b0ba427abaefbe7b13458efdbd"
 SEUIL_BAISSE = -0.01                     # -10% (met -0.01 pour tester)
 # =============================================================
 
