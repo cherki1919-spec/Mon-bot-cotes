@@ -6,8 +6,8 @@ from datetime import datetime
 # ======================= CONFIGURATION =======================
 TELEGRAM_TOKEN = "8829107151:AAG1JLV9-7AI-H6wugq3YaNE2IIqlrZyxuk"  # Remplace par ton token BotFather
 CHAT_ID = "810719713"       # Remplace par ton ID Telegram
-SEUIL_DANGER_1MT = 4          # Seuil pour alerte 1ère MT
-SEUIL_DANGER_MATCH = 5        # Seuil pour alerte match complet
+SEUIL_DANGER_1MT = 2          # Seuil pour alerte 1ère MT
+SEUIL_DANGER_MATCH = 2        # Seuil pour alerte match complet
 
 # ==== LISTE DE TOUTES LES LIGUES (à partir de la documentation ESPN) ====
 # Cette liste est une compilation des slugs pour le football masculin,
