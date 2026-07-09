@@ -1,111 +1,147 @@
 import requests
 import time
+from datetime import datetime
 from collections import defaultdict
 
-# ========== CONFIGURATION ==========
+# ======================= CONFIGURATION =======================
 TELEGRAM_TOKEN = "8829107151:AAG1JLV9-7AI-H6wugq3YaNE2IIqlrZyxuk"
 CHAT_ID = "810719713"
-API_KEY = "38455300fddea39322e9debbe5c0ff76"
-SPORT = "upcoming"  # ✅ Changement clé : "upcoming" couvre TOUS les sports et compétitions
-REGIONS = "eu,us,au,uk"
-MARKETS = "h2h"
-SEUIL_BAISSE = -0.01  # Temporairement à 1% pour tester
-# ===================================
+RAPIDAPI_KEY = "da61753fdd0448298657e6e316007677"
+SEUIL_BAISSE = -0.01                  # -10% (met -0.01 pour tester)
+# =============================================================
 
-# ✅ Liste des mots-clés (pays + variantes) pour une détection plus souple
-MOTS_CLES = {
-    "Malta", "Montenegro", "North Macedonia", "Macedonia", "Greece", "Cyprus", "Albania",
+# ---------- Liste des pays à surveiller (MISE À JOUR) ----------
+PAYS_CIBLES = {
+    # Afrique (Nouveaux)
+    "Cameroon", "Tunisia", "Algeria",
+    # Europe
+    "Malta", "Montenegro", "North Macedonia", "Greece", "Cyprus", "Albania",
     "Georgia", "Kazakhstan", "Kosovo", "Slovenia", "Austria", "Israel",
+    # Asie
     "Bangladesh", "Mongolia", "Bhutan", "Myanmar", "Cambodia", "Malaysia",
-    "India", "Thailand", "Indonesia", "Vietnam", "Bolivia", "Panama",
-    "Honduras", "Venezuela", "Jamaica", "Costa Rica", "Paraguay", "Ecuador",
-    "Mexico", "Argentina", "Brazil", "Brasil"
+    "India", "Thailand", "Indonesia", "Vietnam",
+    # Amérique Latine (Bolivie, Équateur, Paraguay déjà présents)
+    "Bolivia", "Panama", "Honduras", "Venezuela", "Jamaica",
+    "Costa Rica", "Paraguay", "Ecuador",
+    "Mexico", "Argentina", "Brazil"
 }
 
-URL_ODDS = f"https://api.the-odds-api.com/v4/sports/{SPORT}/odds/"
-PARAMS = {"apiKey": API_KEY, "regions": REGIONS, "markets": MARKETS}
+# Configuration de l'API Football
+URL_BASE = "https://api-football-v1.p.rapidapi.com/v3"
+HEADERS = {
+    "X-RapidAPI-Key": RAPIDAPI_KEY,
+    "X-RapidAPI-Host": "api-football-v1.p.rapidapi.com"
+}
+
 historique = defaultdict(lambda: {"home": 0.0, "draw": 0.0, "away": 0.0})
 
 def envoyer_telegram(message):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     try:
         requests.get(url, params={"chat_id": CHAT_ID, "text": message}, timeout=10)
-        print("✅ Message envoyé à Telegram")
+        print("✅ Alerte envoyée !")
     except Exception as e:
         print(f"❌ Erreur d'envoi : {e}")
 
-print("🤖 Bot lancé - Surveillance élargie...")
+def get_fixtures_du_jour():
+    date_aujourdhui = datetime.now().strftime("%Y-%m-%d")
+    url = f"{URL_BASE}/fixtures"
+    params = {"date": date_aujourdhui}
+    try:
+        reponse = requests.get(url, headers=HEADERS, params=params, timeout=15)
+        data = reponse.json()
+        if data.get("results", 0) == 0:
+            print("📭 Aucun match trouvé pour aujourd'hui.")
+            return []
+        return data.get("response", [])
+    except Exception as e:
+        print(f"❌ Erreur fixtures : {e}")
+        return []
+
+def get_odds_pour_fixture(fixture_id):
+    url = f"{URL_BASE}/odds"
+    params = {"fixture": fixture_id}
+    try:
+        reponse = requests.get(url, headers=HEADERS, params=params, timeout=15)
+        data = reponse.json()
+        if data.get("results", 0) == 0:
+            return None
+        bookmakers = data["response"][0].get("bookmakers", [])
+        if not bookmakers:
+            return None
+        for bet in bookmakers[0].get("bets", []):
+            if bet.get("id") == 1 or bet.get("name") == "Match Winner":
+                valeurs = bet.get("values", [])
+                if len(valeurs) >= 3:
+                    home = float(valeurs[0].get("odd", 0))
+                    draw = float(valeurs[1].get("odd", 0))
+                    away = float(valeurs[2].get("odd", 0))
+                    return {"home": home, "draw": draw, "away": away}
+        return None
+    except Exception as e:
+        print(f"⚠️ Erreur cotes {fixture_id} : {e}")
+        return None
+
+print("🤖 Bot lancé - Surveillance élargie (Afrique + AmLat + Asie + Europe)")
 
 while True:
     try:
-        reponse = requests.get(URL_ODDS, params=PARAMS, timeout=15)
-        matchs = reponse.json()
-        print(f"🔍 {len(matchs)} matchs reçus")
+        fixtures = get_fixtures_du_jour()
+        print(f"📊 {len(fixtures)} matchs aujourd'hui")
 
-        for match in matchs:
-            titre = match.get("sport_title", "")
-            equipes = f"{match.get('home_team', '?')} vs {match.get('away_team', '?')}"
+        matches_a_surveiller = []
+        for match in fixtures:
+            pays = match.get("league", {}).get("country", "")
+            if pays in PAYS_CIBLES:
+                matches_a_surveiller.append({
+                    "id": match["fixture"]["id"],
+                    "pays": pays,
+                    "home": match["teams"]["home"]["name"],
+                    "away": match["teams"]["away"]["name"]
+                })
 
-            # Vérification si le titre contient un de nos mots-clés
-            pays_match = None
-            for mot in MOTS_CLES:
-                if mot.lower() in titre.lower():
-                    pays_match = mot
-                    break
+        print(f"🎯 {len(matches_a_surveiller)} matchs à surveiller (filtre pays)")
 
-            if not pays_match:
-                # Affiche les 5 premiers matchs ignorés pour déboguer
+        for match_info in matches_a_surveiller:
+            fixture_id = match_info["id"]
+            cotes = get_odds_pour_fixture(fixture_id)
+            if not cotes:
                 continue
 
-            print(f"✅ Match ciblé : {titre} - {equipes}")
-
-            # Récupération des cotes
-            if not match.get("bookmakers"):
-                print("❌ Aucun bookmaker")
-                continue
-
-            bookmaker = match["bookmakers"][0]
-            if not bookmaker.get("markets"):
-                print("❌ Aucun marché")
-                continue
-
-            cotes = bookmaker["markets"][0]["outcomes"]
-            cotes_actuelles = {c["name"]: c["price"] for c in cotes}
-            home = cotes_actuelles.get("home", 0.0)
-            draw = cotes_actuelles.get("draw", 0.0)
-            away = cotes_actuelles.get("away", 0.0)
-            print(f"📊 Cotes : H={home} D={draw} A={away}")
-
-            # Si les cotes sont à 0, on ignore ce match (pas de cotes disponibles)
+            home, draw, away = cotes["home"], cotes["draw"], cotes["away"]
             if home == 0.0 and draw == 0.0 and away == 0.0:
-                print("⏳ Cotes non disponibles pour l'instant")
                 continue
 
-            anciennes = historique[match["id"]]
+            anciennes = historique[fixture_id]
             if anciennes["home"] == 0.0 and anciennes["draw"] == 0.0 and anciennes["away"] == 0.0:
-                historique[match["id"]] = {"home": home, "draw": draw, "away": away}
-                print("📝 Première init")
+                historique[fixture_id] = {"home": home, "draw": draw, "away": away}
+                print(f"📝 Init : {match_info['home']} vs {match_info['away']}")
                 continue
 
-            # Vérification des baisses
+            nom_match = f"{match_info['home']} vs {match_info['away']}"
+            pays = match_info['pays']
+
             if anciennes["home"] > 0 and home > 0:
-                variation = (home - anciennes["home"]) / anciennes["home"]
-                if variation < SEUIL_BAISSE:
-                    envoyer_telegram(f"🔻 BAISSE {pays_match}\n{equipes}\n🏠 {anciennes['home']:.2f} ➡️ {home:.2f} ({variation*100:.1f}%)")
+                var = (home - anciennes["home"]) / anciennes["home"]
+                if var < SEUIL_BAISSE:
+                    envoyer_telegram(f"🔻 BAISSE ({pays})\n{nom_match}\n🏠 {anciennes['home']:.2f} ➡️ {home:.2f} ({var*100:.1f}%)")
 
             if anciennes["draw"] > 0 and draw > 0:
-                variation = (draw - anciennes["draw"]) / anciennes["draw"]
-                if variation < SEUIL_BAISSE:
-                    envoyer_telegram(f"🔻 BAISSE {pays_match}\n{equipes}\n🤝 {anciennes['draw']:.2f} ➡️ {draw:.2f} ({variation*100:.1f}%)")
+                var = (draw - anciennes["draw"]) / anciennes["draw"]
+                if var < SEUIL_BAISSE:
+                    envoyer_telegram(f"🔻 BAISSE ({pays})\n{nom_match}\n🤝 {anciennes['draw']:.2f} ➡️ {draw:.2f} ({var*100:.1f}%)")
 
             if anciennes["away"] > 0 and away > 0:
-                variation = (away - anciennes["away"]) / anciennes["away"]
-                if variation < SEUIL_BAISSE:
-                    envoyer_telegram(f"🔻 BAISSE {pays_match}\n{equipes}\n✈️ {anciennes['away']:.2f} ➡️ {away:.2f} ({variation*100:.1f}%)")
+                var = (away - anciennes["away"]) / anciennes["away"]
+                if var < SEUIL_BAISSE:
+                    envoyer_telegram(f"🔻 BAISSE ({pays})\n{nom_match}\n✈️ {anciennes['away']:.2f} ➡️ {away:.2f} ({var*100:.1f}%)")
 
-            historique[match["id"]] = {"home": home, "draw": draw, "away": away}
+            historique[fixture_id] = {"home": home, "draw": draw, "away": away}
 
-        time.sleep(60)
+        # ✅ Pause de 1 heure (3600s) pour respecter le quota gratuit (100 appels/jour)
+        print("⏳ Pause de 1 heure...")
+        time.sleep(3600)
+
     except Exception as e:
-        print(f"❌ Erreur : {e}")
-        time.sleep(30)
+        print(f"❌ Erreur générale : {e}")
+        time.sleep(60)
