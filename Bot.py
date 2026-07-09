@@ -1,14 +1,16 @@
 import requests
 import time
 import re
+import json
 from collections import defaultdict
 from datetime import datetime
 
 # ======================= CONFIGURATION =======================
-TELEGRAM_TOKEN = "8829107151:AAG1JLV9-7AI-H6wugq3YaNE2IIqlrZyxuk"  # Remplace par ton token BotFather
+TELEGRAM_TOKEN = "8829107151:AAG1JLV9-7AI-H6wugq3YaNE2IIqlrZyxuk"
+  # Remplace par ton token BotFather
 CHAT_ID = "810719713"       # Remplace par ton ID Telegram
-SEUIL_DANGER_1MT = 3          # Seuil pour alerte 1ère MT
-SEUIL_DANGER_MATCH = 4        # Seuil pour alerte match complet
+SEUIL_DANGER_1MT = 2          # Seuil pour alerte 1ère MT
+SEUIL_DANGER_MATCH = 2        # Seuil pour alerte match complet
 # =============================================================
 
 historique = defaultdict(lambda: {
@@ -39,32 +41,47 @@ def envoyer_telegram(message):
         return False
 
 def get_live_matches_flashscore():
-    """Scrape les matchs en direct avec stats depuis Flashscore"""
+    """Récupère les matchs en direct avec stats depuis Flashscore"""
     all_matches = []
-    url = "https://www.flashscore.com/football/"
+    
+    # Flashscore utilise une API interne
+    url = "https://d.flashscore.com/x/feed/f_1_1_2_en_1"
     headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        "Origin": "https://www.flashscore.com",
+        "Referer": "https://www.flashscore.com/"
     }
     
     try:
         response = requests.get(url, headers=headers, timeout=15)
-        html = response.text
+        data = response.text
         
-        # Recherche des blocs de matchs en direct
-        # Format: "Équipe A - Équipe B" suivi de "statistiques"
-        pattern = r'<div[^>]*class="[^"]*event[^"]*"[^>]*>.*?<span[^>]*>(.*?)</span>.*?<span[^>]*>(.*?)</span>.*?<span[^>]*>(.*?)</span>.*?<span[^>]*>(.*?)</span>'
+        # Extraction des matchs en direct
+        # Format: "ID~ÉquipeA~ÉquipeB~ScoreA~ScoreB~Minute~..."
+        pattern = r'(\d+)~([^~]+)~([^~]+)~(\d+)~(\d+)~([^~]+)~'
+        matches = re.findall(pattern, data)
         
-        matchs_trouves = re.findall(pattern, html, re.DOTALL)
-        
-        for match in matchs_trouves:
+        for match in matches:
             try:
-                home = match[0].strip()
-                away = match[1].strip()
-                home_score = int(match[2]) if match[2].isdigit() else 0
-                away_score = int(match[3]) if match[3].isdigit() else 0
+                match_id = match[0]
+                home = match[1].strip()
+                away = match[2].strip()
+                home_score = int(match[3])
+                away_score = int(match[4])
+                minute_str = match[5]
                 
-                # On ajoute des stats simulées pour le moment
-                # (en vrai, Flashscore a une API séparée pour les stats)
+                # Extraction de la minute
+                minute = 0
+                if "'" in minute_str:
+                    try:
+                        minute = int(minute_str.replace("'", ""))
+                    except:
+                        minute = 0
+                
+                # Recherche des statistiques
+                stat_pattern = rf'{match_id}~.*?"statistics":\[(.*?)\]'
+                stat_match = re.search(stat_pattern, data)
+                
                 home_shots = 0
                 away_shots = 0
                 home_corners = 0
@@ -76,37 +93,85 @@ def get_live_matches_flashscore():
                 home_shots_on_target = 0
                 away_shots_on_target = 0
                 
-                # Vérification des stats
-                stats_match = re.search(r'shots:"(.*?)"', html)
-                if stats_match:
-                    stats = stats_match.group(1)
-                    if ":" in stats:
-                        parts = stats.split(",")
-                        for part in parts:
-                            if "shots:" in part:
-                                home_shots = int(part.split(":")[1].split("-")[0])
-                                away_shots = int(part.split(":")[1].split("-")[1])
+                if stat_match:
+                    stats_str = stat_match.group(1)
+                    # Extraction des valeurs
+                    # Format: "stat_name","home_value","away_value"
+                    stat_items = re.findall(r'"([^"]+)","([^"]+)","([^"]+)"', stats_str)
+                    for stat_name, home_val, away_val in stat_items:
+                        if "shots" in stat_name.lower():
+                            try:
+                                home_shots = int(home_val) if home_val.isdigit() else 0
+                                away_shots = int(away_val) if away_val.isdigit() else 0
+                            except:
+                                pass
+                        elif "corners" in stat_name.lower() or "corner" in stat_name.lower():
+                            try:
+                                home_corners = int(home_val) if home_val.isdigit() else 0
+                                away_corners = int(away_val) if away_val.isdigit() else 0
+                            except:
+                                pass
+                        elif "possession" in stat_name.lower():
+                            try:
+                                home_possession = int(home_val.replace("%", "")) if home_val else 50
+                                away_possession = int(away_val.replace("%", "")) if away_val else 50
+                            except:
+                                pass
+                        elif "attacks" in stat_name.lower():
+                            try:
+                                home_attacks = int(home_val) if home_val.isdigit() else 0
+                                away_attacks = int(away_val) if away_val.isdigit() else 0
+                            except:
+                                pass
+                        elif "shots on target" in stat_name.lower():
+                            try:
+                                home_shots_on_target = int(home_val) if home_val.isdigit() else 0
+                                away_shots_on_target = int(away_val) if away_val.isdigit() else 0
+                            except:
+                                pass
                 
-                # Calcul du danger
+                # Calcul du danger 1MT
                 danger_score_1mt = 0
-                danger_score_match = 0
+                if minute < 45:
+                    if home_shots >= 2: danger_score_1mt += 2
+                    if away_shots >= 2: danger_score_1mt += 2
+                    if home_corners >= 2: danger_score_1mt += 1
+                    if away_corners >= 2: danger_score_1mt += 1
+                    if home_attacks >= 5: danger_score_1mt += 2
+                    if away_attacks >= 5: danger_score_1mt += 2
+                    if home_possession > 60: danger_score_1mt += 1
+                    if away_possession > 60: danger_score_1mt += 1
                 
-                # Pour le match complet
+                # Calcul du danger match
+                danger_score_match = 0
                 if home_shots >= 3: danger_score_match += 2
                 if away_shots >= 3: danger_score_match += 2
+                if home_shots >= 5: danger_score_match += 1
+                if away_shots >= 5: danger_score_match += 1
                 if home_corners >= 3: danger_score_match += 2
                 if away_corners >= 3: danger_score_match += 2
+                if home_attacks >= 8: danger_score_match += 2
+                if away_attacks >= 8: danger_score_match += 2
                 if home_possession > 60: danger_score_match += 1
                 if away_possession > 60: danger_score_match += 1
+                if minute > 75: danger_score_match += 3
+                elif minute > 60: danger_score_match += 2
+                
+                # Buts attendus
+                buts_attendus = {
+                    "total": round((home_shots + away_shots) * 0.12 + (home_corners + away_corners) * 0.04 + (home_attacks + away_attacks) * 0.02, 2),
+                    "1mt": round((home_shots + away_shots) * 0.05 + (home_corners + away_corners) * 0.02, 2),
+                    "proba_1mt": min(95, (home_shots + away_shots) * 8)
+                }
                 
                 all_matches.append({
-                    "id": f"{home}_{away}",
+                    "id": match_id,
                     "league": "Flashscore",
                     "home": home,
                     "away": away,
                     "home_score": home_score,
                     "away_score": away_score,
-                    "minute": 30,
+                    "minute": minute,
                     "home_shots": home_shots,
                     "away_shots": away_shots,
                     "home_corners": home_corners,
@@ -119,13 +184,11 @@ def get_live_matches_flashscore():
                     "away_shots_on_target": away_shots_on_target,
                     "danger_score_1mt": danger_score_1mt,
                     "danger_score_match": danger_score_match,
-                    "buts_attendus": {
-                        "total": 0.5,
-                        "1mt": 0.3,
-                        "proba_1mt": 50
-                    }
+                    "buts_attendus": buts_attendus
                 })
-            except:
+                
+            except Exception as e:
+                print(f"⚠️ Erreur match: {e}")
                 continue
         
         return all_matches
@@ -145,20 +208,59 @@ while True:
         for match in matchs:
             match_id = match["id"]
             ancien = historique[match_id]
+            minute = match["minute"]
+            
+            # ALERTE 1ÈRE MI-TEMPS
+            if minute < 45 and match["danger_score_1mt"] >= SEUIL_DANGER_1MT:
+                if ancien["last_alert_1mt"] == 0 or (time.time() - ancien["last_alert_1mt"]) > 600:
+                    message = (
+                        f"⚽ **ALERTE BUT - 1ÈRE MI-TEMPS** ⚽\n\n"
+                        f"📍 {match['home']} {match['home_score']} - {match['away_score']} {match['away']}\n"
+                        f"🏆 Flashscore\n"
+                        f"⏱️ {minute}' (1MT)\n\n"
+                        f"📊 **Statistiques live:**\n"
+                        f"🔫 Tirs: {match['home_shots']} - {match['away_shots']}\n"
+                        f"🎯 Tirs cadrés: {match['home_shots_on_target']} - {match['away_shots_on_target']}\n"
+                        f"🏁 Corners: {match['home_corners']} - {match['away_corners']}\n"
+                        f"🧊 Possession: {match['home_possession']}% - {match['away_possession']}%\n"
+                        f"⚡ Attaques dangereuses: {match['home_attacks']} - {match['away_attacks']}\n\n"
+                        f"📈 **Prédictions:**\n"
+                        f"🔮 Buts attendus: {match['buts_attendus']['1mt']:.2f}\n"
+                        f"🎰 Probabilité de but: {match['buts_attendus']['proba_1mt']}%\n"
+                        f"⚠️ Score de danger: {match['danger_score_1mt']}/10\n\n"
+                        f"🔥 Un but est très probable dans les 5 prochaines minutes !"
+                    )
+                    if envoyer_telegram(message):
+                        alertes_envoyees += 1
+                    historique[match_id]["last_alert_1mt"] = time.time()
             
             # ALERTE MATCH COMPLET
             if match["danger_score_match"] >= SEUIL_DANGER_MATCH:
                 if ancien["last_alert_match"] == 0 or (time.time() - ancien["last_alert_match"]) > 600:
+                    pred = match["buts_attendus"]
+                    plus_0_5 = "✅" if pred["total"] > 0.5 else "❌"
+                    plus_1_5 = "✅" if pred["total"] > 1.5 else "❌"
+                    plus_2_5 = "✅" if pred["total"] > 2.5 else "❌"
+                    plus_3_5 = "✅" if pred["total"] > 3.5 else "❌"
+                    
                     message = (
-                        f"⚽ **ALERTE BUT - FLASHSCORE** ⚽\n\n"
+                        f"⚽ **ALERTE BUT - MATCH COMPLET** ⚽\n\n"
                         f"📍 {match['home']} {match['home_score']} - {match['away_score']} {match['away']}\n"
-                        f"🏆 {match['league']}\n"
-                        f"⏱️ {match['minute']}'\n\n"
+                        f"🏆 Flashscore\n"
+                        f"⏱️ {minute}'\n\n"
                         f"📊 **Statistiques live:**\n"
                         f"🔫 Tirs: {match['home_shots']} - {match['away_shots']}\n"
+                        f"🎯 Tirs cadrés: {match['home_shots_on_target']} - {match['away_shots_on_target']}\n"
                         f"🏁 Corners: {match['home_corners']} - {match['away_corners']}\n"
                         f"🧊 Possession: {match['home_possession']}% - {match['away_possession']}%\n"
                         f"⚡ Attaques dangereuses: {match['home_attacks']} - {match['away_attacks']}\n\n"
+                        f"📊 **Prédictions:**\n"
+                        f"⚽ Plus de 0.5 but: {plus_0_5}\n"
+                        f"⚽ Plus de 1.5 but: {plus_1_5}\n"
+                        f"⚽ Plus de 2.5 but: {plus_2_5}\n"
+                        f"⚽ Plus de 3.5 but: {plus_3_5}\n"
+                        f"📈 Buts attendus: {pred['total']:.2f}\n"
+                        f"🕐 Minute: {minute}'\n\n"
                         f"⚠️ Score de danger: {match['danger_score_match']}/13\n"
                         f"🔥 Un but pourrait être marqué dans les minutes qui suivent !"
                     )
@@ -167,6 +269,7 @@ while True:
                     historique[match_id]["last_alert_match"] = time.time()
             
             # Mise à jour de l'historique
+            historique[match_id]["danger_score_1mt"] = match["danger_score_1mt"]
             historique[match_id]["danger_score_match"] = match["danger_score_match"]
             historique[match_id]["home_shots"] = match["home_shots"]
             historique[match_id]["away_shots"] = match["away_shots"]
@@ -176,6 +279,8 @@ while True:
             historique[match_id]["away_possession"] = match["away_possession"]
             historique[match_id]["home_attacks"] = match["home_attacks"]
             historique[match_id]["away_attacks"] = match["away_attacks"]
+            historique[match_id]["home_shots_on_target"] = match["home_shots_on_target"]
+            historique[match_id]["away_shots_on_target"] = match["away_shots_on_target"]
 
         if alertes_envoyees > 0:
             print(f"📨 {alertes_envoyees} alertes envoyées")
