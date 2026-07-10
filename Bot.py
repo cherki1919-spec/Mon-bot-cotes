@@ -5,31 +5,135 @@ import json
 from collections import defaultdict
 
 # ======================= CONFIGURATION =======================
-TELEGRAM_TOKEN = "8829107151:AAFA7EcQR5tBnC_eW9icR7VH1P4IqNr7Tl4"   # Remplace par ton token
+TELEGRAM_TOKEN = "8829107151:AAFA7EcQR5tBnC_eW9icR7VH1P4IqNr7Tl4"
+   # Remplace par ton token
 CHAT_ID = "810719713"        # Remplace par ton ID
 ODDS_API_KEY = "d701b89123f5ca8450aeb968456fe372"
-SEUIL_ALERTE_1MT = 0.60
-SEUIL_ALERTE_MATCH = 1.20
+SEUIL_ALERTE_1MT = 0.30        # Baissé pour plus d'alertes
+SEUIL_ALERTE_MATCH = 0.80      # Baissé pour plus d'alertes
 # =============================================================
 
+# ===== TOUTES LES LIGUES DU MONDE =====
 SPORTS = [
+    # ---- Europe (Top divisions) ----
     "soccer_epl", "soccer_eng_league1", "soccer_eng_league2",
     "soccer_spain_la_liga", "soccer_spain_segunda_division",
     "soccer_italy_serie_a", "soccer_italy_serie_b",
     "soccer_germany_bundesliga", "soccer_germany_bundesliga2",
     "soccer_france_ligue_one", "soccer_france_ligue_two",
     "soccer_netherlands_eredivisie", "soccer_portugal_primeira_liga",
+    "soccer_belgium_first_division",
+    "soccer_turkey_super_league",
+    "soccer_greece_super_league",
+    "soccer_scotland_premiership",
+    "soccer_austria_bundesliga",
+    "soccer_switzerland_super_league",
+
+    # ---- Amérique du Sud ----
     "soccer_brazil_campeonato", "soccer_brazil_serie_b",
-    "soccer_argentina_primera_division", "soccer_mexico_ligamx",
-    "soccer_usa_mls", "soccer_australia_aleague",
-    "soccer_japan_j_league", "soccer_china_superleague",
+    "soccer_argentina_primera_division", "soccer_argentina_primera_b_nacional",
+    "soccer_mexico_ligamx", "soccer_mexico_liga_de_expansion",
+    "soccer_uruguay_primera_division",
+    "soccer_paraguay_division_profesional",
+    "soccer_paraguay_division_intermedia",
+    "soccer_chile_primera_division",
+    "soccer_colombia_primera_a", "soccer_colombia_primera_b",
+    "soccer_peru_liga_1", "soccer_peru_copa_liga",
+    "soccer_ecuador_serie_a",
+    "soccer_bolivia_primera_division",
+    "soccer_venezuela_primera_division",
+
+    # ---- Amérique du Nord ----
+    "soccer_usa_mls", "soccer_usa_usl_championship",
+    "soccer_canada_premier_league",
+
+    # ---- Afrique ----
+    "soccer_south_africa_psl",
+    "soccer_egypt_premier_league",
+    "soccer_morocco_botola",
+    "soccer_tunisia_ligue_1",
+    "soccer_algeria_ligue_1",
+
+    # ---- Asie ----
+    "soccer_japan_j_league", "soccer_japan_j2_league",
+    "soccer_china_superleague", "soccer_china_league_one",
+    "soccer_australia_aleague",
     "soccer_india_isl",
-    "soccer_uefa_champions_league", "soccer_uefa_europa_league",
+    "soccer_thailand_league_1",
+    "soccer_vietnam_v_league",
+    "soccer_malaysia_super_league",
+    "soccer_indonesia_liga_1",
+    "soccer_singapore_premier_league",
+
+    # ---- Compétitions internationales ----
+    "soccer_uefa_champions_league",
+    "soccer_uefa_europa_league",
     "soccer_uefa_europa_conference_league",
-    "soccer_fifa_world_cup", "soccer_uefa_euro",
-    "soccer_conmebol_copa_america", "soccer_concacaf_gold_cup",
-    "soccer_africa_cup_of_nations", "soccer_afc_asian_cup",
-    "soccer_friendly", "soccer_friendly_women",
+    "soccer_conmebol_libertadores",
+    "soccer_conmebol_sudamericana",
+    "soccer_fifa_world_cup",
+    "soccer_uefa_euro",
+    "soccer_conmebol_copa_america",
+    "soccer_concacaf_gold_cup",
+    "soccer_africa_cup_of_nations",
+    "soccer_afc_asian_cup",
+
+    # ---- Compétitions jeunes (U20, U19, etc.) ----
+    "soccer_brazil_u20_campeonato",
+    "soccer_brazil_u17_campeonato",
+    "soccer_argentina_u20",
+    "soccer_colombia_u20",
+    "soccer_paraguay_u20",
+    "soccer_uruguay_u20",
+    "soccer_chile_u19",
+    "soccer_mexico_u20",
+    "soccer_usa_u20",
+    "soccer_friendly_u20",
+    "soccer_international_friendly_u20",
+    "soccer_panama_u20",
+    "soccer_cuba_u20",
+
+    # ---- Compétitions féminines ----
+    "soccer_women_england",
+    "soccer_women_spain",
+    "soccer_women_germany",
+    "soccer_women_france",
+    "soccer_women_usa",
+    "soccer_women_sweden",
+    "soccer_women_netherlands",
+    "soccer_women_iceland_1_deild",
+
+    # ---- Autres ligues mineures ----
+    "soccer_iceland_1_deild",
+    "soccer_iceland_2_deild",
+    "soccer_iceland_1_deild_women",
+    "soccer_finland_veikkausliiga",
+    "soccer_sweden_allsvenskan",
+    "soccer_norway_eliteserien",
+    "soccer_denmark_superliga",
+    "soccer_poland_ekstraklasa",
+    "soccer_czech_republic_1_liga",
+    "soccer_croatia_hnl",
+    "soccer_serbia_superliga",
+    "soccer_romania_liga_1",
+    "soccer_hungary_nb_i",
+    "soccer_slovakia_super_liga",
+    "soccer_slovenia_prva_liga",
+    "soccer_bulgaria_first_league",
+    "soccer_israel_premier_league",
+    "soccer_cyprus_first_division",
+    "soccer_malta_premier_league",
+    "soccer_montenegro_first_league",
+    "soccer_kosovo_superleague",
+    "soccer_north_macedonia_first_league",
+    "soccer_albania_superliga",
+    "soccer_georgia_erovnuli_liga",
+    "soccer_kazakhstan_premier_league",
+
+    # ---- Amicales ----
+    "soccer_friendly",
+    "soccer_friendly_women",
+    "soccer_club_friendly",
 ]
 
 historique_matchs = defaultdict(lambda: {
@@ -48,8 +152,6 @@ def envoyer_telegram(message):
         return False
 
 def get_live_scores_for_sport(sport):
-    # On retire le paramètre daysFrom pour ne récupérer que les matchs en direct et à venir
-    # Dans la fonction suivante, on filtre pour ne garder que les "live"
     url = f"https://api.the-odds-api.com/v4/sports/{sport}/scores"
     params = {"apiKey": ODDS_API_KEY}
     try:
@@ -65,20 +167,21 @@ def get_live_scores_for_sport(sport):
 
 def get_all_live_scores():
     all_matches = []
+    total_ignored = 0
     for sport in SPORTS:
         matchs = get_live_scores_for_sport(sport)
         if matchs:
             live_matchs = []
             for match in matchs:
-                # Le champ "status" est la clé pour ne garder que les matchs en cours
                 if match.get("status") == "in":
                     live_matchs.append(match)
-                else:
-                    print(f"Match ignore (status={match.get('status')}): {match.get('home_team', '?')} vs {match.get('away_team', '?')}")
             if live_matchs:
-                print(f"{sport}: {len(live_matchs)} matchs en direct (sur {len(matchs)} recus)")
+                print(f"{sport}: {len(live_matchs)} en direct")
                 all_matches.extend(live_matchs)
-        time.sleep(0.5)
+            else:
+                total_ignored += len(matchs)
+        time.sleep(0.3)
+    print(f"{len(all_matches)} matchs en direct (ignores: {total_ignored})")
     return all_matches
 
 def get_team_stats(team_name):
@@ -153,15 +256,14 @@ def calculer_buts_attendus(match, minute, home_team, away_team):
         "total_1mt": round(total_1mt, 2),
     }
 
-print("Bot lance - Predictions de buts")
+print("Bot lance - Predictions de buts (TOUTES LIGUES)")
 
 while True:
     try:
         matchs = get_all_live_scores()
-        print(f"{len(matchs)} matchs en direct")
 
         if not matchs:
-            print("Aucun match, pause 60s")
+            print("Aucun match en direct")
             time.sleep(60)
             continue
 
@@ -170,7 +272,6 @@ while True:
             if not match_id:
                 continue
 
-            # Le filtrage par status est maintenant fait en amont dans get_all_live_scores()
             home_team = match.get("home_team", "?")
             away_team = match.get("away_team", "?")
             scores = match.get("scores", [])
@@ -213,15 +314,15 @@ while True:
                 if pred["total_1mt"] >= SEUIL_ALERTE_1MT:
                     if historique_matchs[match_id]["last_alert_1mt"] == 0 or (time.time() - historique_matchs[match_id]["last_alert_1mt"]) > 600:
                         message = (
-                            f"ALERTE BUT - 1ERE MI-TEMPS\n\n"
+                            f"⚽ ALERTE BUT - 1ERE MI-TEMPS\n\n"
                             f"{home_team} {home_score} - {away_score} {away_team}\n"
-                            f"{minute} (1MT)\n\n"
+                            f"⏱ {minute} (1MT)\n\n"
                             f"Buts attendus 1MT: {pred['total_1mt']:.2f}\n"
                             f"xG {home_team}: {pred['xG_home_1mt']:.2f}\n"
                             f"xG {away_team}: {pred['xG_away_1mt']:.2f}\n\n"
                             f"Tirs: {home_shots} - {away_shots}\n"
                             f"Corners: {home_corners} - {away_corners}\n\n"
-                            f"But probable dans les 5 prochaines minutes"
+                            f"But probable dans les 5 minutes"
                         )
                         envoyer_telegram(message)
                         historique_matchs[match_id]["last_alert_1mt"] = time.time()
@@ -229,9 +330,9 @@ while True:
             if pred["total_match"] >= SEUIL_ALERTE_MATCH:
                 if historique_matchs[match_id]["last_alert_match"] == 0 or (time.time() - historique_matchs[match_id]["last_alert_match"]) > 600:
                     message = (
-                        f"ALERTE BUT - MATCH COMPLET\n\n"
+                        f"⚽ ALERTE BUT - MATCH COMPLET\n\n"
                         f"{home_team} {home_score} - {away_score} {away_team}\n"
-                        f"{minute}\n\n"
+                        f"⏱ {minute}\n\n"
                         f"Buts attendus match: {pred['total_match']:.2f}\n"
                         f"xG {home_team}: {pred['xG_home']:.2f}\n"
                         f"xG {away_team}: {pred['xG_away']:.2f}\n\n"
@@ -242,7 +343,7 @@ while True:
                     envoyer_telegram(message)
                     historique_matchs[match_id]["last_alert_match"] = time.time()
 
-        time.sleep(120)
+        time.sleep(90)
 
     except Exception as e:
         print(f"Erreur: {e}")
