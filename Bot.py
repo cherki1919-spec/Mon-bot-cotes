@@ -5,8 +5,8 @@ import json
 from collections import defaultdict
 
 # ======================= CONFIGURATION =======================
-TELEGRAM_TOKEN = "8829107151:AAFA7EcQR5tBnC_eW9icR7VH1P4IqNr7Tl4" # Remplace par ton token (en privé)
-CHAT_ID = "O810719713"       # Remplace par ton ID
+TELEGRAM_TOKEN = "8829107151:AAFA7EcQR5tBnC_eW9icR7VH1P4IqNr7Tl4"   # Remplace par ton token
+CHAT_ID = "810719713"        # Remplace par ton ID
 ODDS_API_KEY = "d701b89123f5ca8450aeb968456fe372"
 SEUIL_ALERTE_1MT = 0.60
 SEUIL_ALERTE_MATCH = 1.20
@@ -48,6 +48,8 @@ def envoyer_telegram(message):
         return False
 
 def get_live_scores_for_sport(sport):
+    # On retire le paramètre daysFrom pour ne récupérer que les matchs en direct et à venir
+    # Dans la fonction suivante, on filtre pour ne garder que les "live"
     url = f"https://api.the-odds-api.com/v4/sports/{sport}/scores"
     params = {"apiKey": ODDS_API_KEY}
     try:
@@ -66,8 +68,16 @@ def get_all_live_scores():
     for sport in SPORTS:
         matchs = get_live_scores_for_sport(sport)
         if matchs:
-            print(f"{sport}: {len(matchs)} matchs")
-            all_matches.extend(matchs)
+            live_matchs = []
+            for match in matchs:
+                # Le champ "status" est la clé pour ne garder que les matchs en cours
+                if match.get("status") == "in":
+                    live_matchs.append(match)
+                else:
+                    print(f"Match ignore (status={match.get('status')}): {match.get('home_team', '?')} vs {match.get('away_team', '?')}")
+            if live_matchs:
+                print(f"{sport}: {len(live_matchs)} matchs en direct (sur {len(matchs)} recus)")
+                all_matches.extend(live_matchs)
         time.sleep(0.5)
     return all_matches
 
@@ -160,10 +170,7 @@ while True:
             if not match_id:
                 continue
 
-            status = match.get("status", "")
-            if status != "in":
-                continue
-
+            # Le filtrage par status est maintenant fait en amont dans get_all_live_scores()
             home_team = match.get("home_team", "?")
             away_team = match.get("away_team", "?")
             scores = match.get("scores", [])
