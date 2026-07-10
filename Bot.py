@@ -5,8 +5,7 @@ import json
 from collections import defaultdict
 
 # ======================= CONFIGURATION =======================
-TELEGRAM_TOKEN = "8829107151:AAFA7EcQR5tBnC_eW9icR7VH1P4IqNr7Tl4"
-"   # Remplace par ton token (en privé)
+TELEGRAM_TOKEN = "8829107151:AAFA7EcQR5tBnC_eW9icR7VH1P4IqNr7Tl4" # Remplace par ton token (en privé)
 CHAT_ID = "O810719713"       # Remplace par ton ID
 ODDS_API_KEY = "d701b89123f5ca8450aeb968456fe372"
 SEUIL_ALERTE_1MT = 0.60
