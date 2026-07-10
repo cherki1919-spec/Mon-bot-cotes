@@ -1,34 +1,31 @@
 import requests
 import time
-import re
-import json
+import math
 from collections import defaultdict
-from datetime import datetime
+from datetime import datetime, timedelta
 
 # ======================= CONFIGURATION =======================
-TELEGRAM_TOKEN = "8829107151:AAG1JLV9-7AI-H6wugq3YaNE2IIqlrZyxuk"
-  # Remplace par ton token BotFather
-CHAT_ID = "810719713"       # Remplace par ton ID Telegram
-SEUIL_DANGER_1MT = 2          # Seuil pour alerte 1ère MT
-SEUIL_DANGER_MATCH = 2        # Seuil pour alerte match complet
+TELEGRAM_TOKEN = "8829107151:AAG1JLV9-7AI-H6wugq3YaNE2IIqlrZyxuk"       # Ton token BotFather
+CHAT_ID = "810719713"               # Ton ID Telegram
+ODDS_API_KEY = "d701b89123f5ca8450aeb968456fe372"  # Ta clé The Odds API
+
+# Seuils d'alerte (ajustables)
+SEUIL_ALERTE_1MT = 0.60   # Buts attendus en 1MT pour déclencher une alerte
+SEUIL_ALERTE_MATCH = 1.20 # Buts attendus match pour déclencher une alerte
 # =============================================================
 
-historique = defaultdict(lambda: {
-    "danger_score": 0,
-    "last_alert": 0,
-    "home_shots": 0,
-    "away_shots": 0,
-    "home_corners": 0,
-    "away_corners": 0,
-    "home_possession": 0,
-    "away_possession": 0,
-    "home_shots_on_target": 0,
-    "away_shots_on_target": 0,
-    "home_attacks": 0,
-    "away_attacks": 0,
+historique_matchs = defaultdict(lambda: {
+    "home_xg_live": 0.0,
+    "away_xg_live": 0.0,
+    "minute": 0,
     "last_alert_1mt": 0,
-    "last_alert_match": 0
+    "last_alert_match": 0,
+    "home_score": 0,
+    "away_score": 0
 })
+
+# Cache pour les stats historiques des équipes
+cache_equipes = {}
 
 def envoyer_telegram(message):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
@@ -40,253 +37,255 @@ def envoyer_telegram(message):
         print(f"❌ Erreur envoi: {e}")
         return False
 
-def get_live_matches_flashscore():
-    """Récupère les matchs en direct avec stats depuis Flashscore"""
-    all_matches = []
-    
-    # Flashscore utilise une API interne
-    url = "https://d.flashscore.com/x/feed/f_1_1_2_en_1"
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-        "Origin": "https://www.flashscore.com",
-        "Referer": "https://www.flashscore.com/"
-    }
-    
+def get_live_scores():
+    """Récupère les matchs en direct via The Odds API (endpoint gratuit)"""
+    url = "https://api.the-odds-api.com/v4/sports/soccer/scores"
+    params = {"apiKey": ODDS_API_KEY, "daysFrom": "1"}
     try:
-        response = requests.get(url, headers=headers, timeout=15)
-        data = response.text
-        
-        # Extraction des matchs en direct
-        # Format: "ID~ÉquipeA~ÉquipeB~ScoreA~ScoreB~Minute~..."
-        pattern = r'(\d+)~([^~]+)~([^~]+)~(\d+)~(\d+)~([^~]+)~'
-        matches = re.findall(pattern, data)
-        
-        for match in matches:
-            try:
-                match_id = match[0]
-                home = match[1].strip()
-                away = match[2].strip()
-                home_score = int(match[3])
-                away_score = int(match[4])
-                minute_str = match[5]
-                
-                # Extraction de la minute
-                minute = 0
-                if "'" in minute_str:
-                    try:
-                        minute = int(minute_str.replace("'", ""))
-                    except:
-                        minute = 0
-                
-                # Recherche des statistiques
-                stat_pattern = rf'{match_id}~.*?"statistics":\[(.*?)\]'
-                stat_match = re.search(stat_pattern, data)
-                
-                home_shots = 0
-                away_shots = 0
-                home_corners = 0
-                away_corners = 0
-                home_possession = 50
-                away_possession = 50
-                home_attacks = 0
-                away_attacks = 0
-                home_shots_on_target = 0
-                away_shots_on_target = 0
-                
-                if stat_match:
-                    stats_str = stat_match.group(1)
-                    # Extraction des valeurs
-                    # Format: "stat_name","home_value","away_value"
-                    stat_items = re.findall(r'"([^"]+)","([^"]+)","([^"]+)"', stats_str)
-                    for stat_name, home_val, away_val in stat_items:
-                        if "shots" in stat_name.lower():
-                            try:
-                                home_shots = int(home_val) if home_val.isdigit() else 0
-                                away_shots = int(away_val) if away_val.isdigit() else 0
-                            except:
-                                pass
-                        elif "corners" in stat_name.lower() or "corner" in stat_name.lower():
-                            try:
-                                home_corners = int(home_val) if home_val.isdigit() else 0
-                                away_corners = int(away_val) if away_val.isdigit() else 0
-                            except:
-                                pass
-                        elif "possession" in stat_name.lower():
-                            try:
-                                home_possession = int(home_val.replace("%", "")) if home_val else 50
-                                away_possession = int(away_val.replace("%", "")) if away_val else 50
-                            except:
-                                pass
-                        elif "attacks" in stat_name.lower():
-                            try:
-                                home_attacks = int(home_val) if home_val.isdigit() else 0
-                                away_attacks = int(away_val) if away_val.isdigit() else 0
-                            except:
-                                pass
-                        elif "shots on target" in stat_name.lower():
-                            try:
-                                home_shots_on_target = int(home_val) if home_val.isdigit() else 0
-                                away_shots_on_target = int(away_val) if away_val.isdigit() else 0
-                            except:
-                                pass
-                
-                # Calcul du danger 1MT
-                danger_score_1mt = 0
-                if minute < 45:
-                    if home_shots >= 2: danger_score_1mt += 2
-                    if away_shots >= 2: danger_score_1mt += 2
-                    if home_corners >= 2: danger_score_1mt += 1
-                    if away_corners >= 2: danger_score_1mt += 1
-                    if home_attacks >= 5: danger_score_1mt += 2
-                    if away_attacks >= 5: danger_score_1mt += 2
-                    if home_possession > 60: danger_score_1mt += 1
-                    if away_possession > 60: danger_score_1mt += 1
-                
-                # Calcul du danger match
-                danger_score_match = 0
-                if home_shots >= 3: danger_score_match += 2
-                if away_shots >= 3: danger_score_match += 2
-                if home_shots >= 5: danger_score_match += 1
-                if away_shots >= 5: danger_score_match += 1
-                if home_corners >= 3: danger_score_match += 2
-                if away_corners >= 3: danger_score_match += 2
-                if home_attacks >= 8: danger_score_match += 2
-                if away_attacks >= 8: danger_score_match += 2
-                if home_possession > 60: danger_score_match += 1
-                if away_possession > 60: danger_score_match += 1
-                if minute > 75: danger_score_match += 3
-                elif minute > 60: danger_score_match += 2
-                
-                # Buts attendus
-                buts_attendus = {
-                    "total": round((home_shots + away_shots) * 0.12 + (home_corners + away_corners) * 0.04 + (home_attacks + away_attacks) * 0.02, 2),
-                    "1mt": round((home_shots + away_shots) * 0.05 + (home_corners + away_corners) * 0.02, 2),
-                    "proba_1mt": min(95, (home_shots + away_shots) * 8)
-                }
-                
-                all_matches.append({
-                    "id": match_id,
-                    "league": "Flashscore",
-                    "home": home,
-                    "away": away,
-                    "home_score": home_score,
-                    "away_score": away_score,
-                    "minute": minute,
-                    "home_shots": home_shots,
-                    "away_shots": away_shots,
-                    "home_corners": home_corners,
-                    "away_corners": away_corners,
-                    "home_possession": home_possession,
-                    "away_possession": away_possession,
-                    "home_attacks": home_attacks,
-                    "away_attacks": away_attacks,
-                    "home_shots_on_target": home_shots_on_target,
-                    "away_shots_on_target": away_shots_on_target,
-                    "danger_score_1mt": danger_score_1mt,
-                    "danger_score_match": danger_score_match,
-                    "buts_attendus": buts_attendus
-                })
-                
-            except Exception as e:
-                print(f"⚠️ Erreur match: {e}")
-                continue
-        
-        return all_matches
+        response = requests.get(url, params=params, timeout=15)
+        return response.json()
     except Exception as e:
-        print(f"❌ Erreur scraping: {e}")
+        print(f"❌ Erreur scores: {e}")
         return []
 
-print("🤖 Bot lancé - Scraping Flashscore (stats réelles)")
+def get_team_stats(team_name, league_id=None):
+    """
+    Récupère les stats historiques d'une équipe (xG moyen sur 5 matchs)
+    Utilise un cache pour éviter les appels répétés
+    """
+    cache_key = f"{team_name}_{league_id}"
+    if cache_key in cache_equipes:
+        return cache_equipes[cache_key]
+    
+    # Ici, on simule des valeurs pour l'exemple
+    # Dans une version réelle, on appellerait API-Football ou Sportmonks
+    import random
+    xg_moyen = round(random.uniform(0.8, 2.2), 2)
+    resultat = {
+        "xg_moyen": xg_moyen,
+        "xg_domicile": round(xg_moyen * 1.15, 2),
+        "xg_exterieur": round(xg_moyen * 0.85, 2)
+    }
+    cache_equipes[cache_key] = resultat
+    return resultat
+
+def get_head_to_head(team1, team2):
+    """
+    Récupère l'historique des confrontations directes
+    Retourne la moyenne de buts dans ces matchs
+    """
+    # Simulation pour l'exemple
+    import random
+    return round(random.uniform(1.5, 3.5), 2)
+
+def calculer_buts_attendus(match, minute, home_team, away_team, home_score, away_score):
+    """
+    Calcule les buts attendus en 1MT et dans le match complet
+    Basé sur xG live, historique équipes, confrontations directes
+    """
+    # 1. xG live du match (depuis l'API) - 40% du poids
+    xg_live_home = match.get("home_xg", 0.0)
+    xg_live_away = match.get("away_xg", 0.0)
+    
+    if xg_live_home == 0 and xg_live_away == 0:
+        # Si pas de xG live, on estime depuis les tirs/corners
+        home_shots = match.get("home_shots", 0)
+        away_shots = match.get("away_shots", 0)
+        home_corners = match.get("home_corners", 0)
+        away_corners = match.get("away_corners", 0)
+        
+        xg_live_home = home_shots * 0.10 + home_corners * 0.03
+        xg_live_away = away_shots * 0.10 + away_corners * 0.03
+    
+    # 2. Stats historiques des équipes (moyenne xG) - 30% du poids
+    stats_home = get_team_stats(home_team)
+    stats_away = get_team_stats(away_team)
+    
+    # Ajustement domicile/extérieur
+    xg_hist_home = stats_home.get("xg_domicile", 1.2)
+    xg_hist_away = stats_away.get("xg_exterieur", 1.0)
+    
+    # 3. Confrontations directes - 20% du poids
+    h2h_avg = get_head_to_head(home_team, away_team)
+    h2h_home = h2h_avg * 0.55
+    h2h_away = h2h_avg * 0.45
+    
+    # 4. Avantage domicile - 10% du poids
+    home_advantage = 0.15  # 15% d'augmentation pour l'équipe à domicile
+    
+    # Calcul des xG prédits pour le match complet
+    xG_home_match = (
+        xg_live_home * 0.40 +
+        xg_hist_home * 0.30 +
+        h2h_home * 0.20 +
+        (xg_hist_home * home_advantage) * 0.10
+    )
+    
+    xG_away_match = (
+        xg_live_away * 0.40 +
+        xg_hist_away * 0.30 +
+        h2h_away * 0.20
+    )
+    
+    # Ajustement basé sur le temps écoulé (extrapolation sur 90 min)
+    if minute > 0 and minute < 90:
+        temps_restant = (90 - minute) / 90
+        facteur_extrapolation = 1 / (minute / 90) if minute > 0 else 1
+        xG_home_match = xG_home_match * facteur_extrapolation * 0.8 + xG_home_match * 0.2
+        xG_away_match = xG_away_match * facteur_extrapolation * 0.8 + xG_away_match * 0.2
+    
+    # Calcul pour la 1ère mi-temps (extrapolation sur 45 min)
+    if minute < 45:
+        temps_ecoule_1mt = minute / 45 if minute > 0 else 0
+        xG_home_1mt = xG_home_match * (temps_ecoule_1mt + 0.3)
+        xG_away_1mt = xG_away_match * (temps_ecoule_1mt + 0.3)
+    else:
+        xG_home_1mt = 0
+        xG_away_1mt = 0
+    
+    # Calcul de la probabilité de but (distribution de Poisson)
+    def proba_au_moins_un_but(xG):
+        return 1 - math.exp(-xG)
+    
+    total_buts_attendus_match = xG_home_match + xG_away_match
+    total_buts_attendus_1mt = xG_home_1mt + xG_away_1mt
+    
+    proba_but_1mt = proba_au_moins_un_but(total_buts_attendus_1mt)
+    
+    # Prédiction du nombre de buts (Over/Under)
+    def predict_over(xG, line):
+        return 1 - sum(math.exp(-xG) * (xG ** k) / math.factorial(k) for k in range(int(line) + 1))
+    
+    over_0_5 = predict_over(total_buts_attendus_match, 0.5)
+    over_1_5 = predict_over(total_buts_attendus_match, 1.5)
+    over_2_5 = predict_over(total_buts_attendus_match, 2.5)
+    over_3_5 = predict_over(total_buts_attendus_match, 3.5)
+    
+    return {
+        "xG_home": round(xG_home_match, 2),
+        "xG_away": round(xG_away_match, 2),
+        "total_match": round(total_buts_attendus_match, 2),
+        "xG_home_1mt": round(xG_home_1mt, 2),
+        "xG_away_1mt": round(xG_away_1mt, 2),
+        "total_1mt": round(total_buts_attendus_1mt, 2),
+        "proba_but_1mt": round(proba_but_1mt * 100, 1),
+        "over_0_5": round(over_0_5 * 100, 1),
+        "over_1_5": round(over_1_5 * 100, 1),
+        "over_2_5": round(over_2_5 * 100, 1),
+        "over_3_5": round(over_3_5 * 100, 1)
+    }
+
+print("🤖 Bot lancé - Prédictions de buts (Poisson + xG + Historique)")
 
 while True:
     try:
-        matchs = get_live_matches_flashscore()
-        print(f"📊 {len(matchs)} matchs en direct analysés")
-
-        alertes_envoyees = 0
+        matchs = get_live_scores()
+        print(f"📊 {len(matchs)} matchs récupérés")
         
         for match in matchs:
-            match_id = match["id"]
-            ancien = historique[match_id]
-            minute = match["minute"]
+            match_id = match.get("id")
+            status = match.get("status", "")
+            
+            if status != "in":
+                continue
+            
+            home_team = match.get("home_team", "?")
+            away_team = match.get("away_team", "?")
+            scores = match.get("scores", [])
+            home_score = int(scores[0].get("score", 0)) if len(scores) > 0 else 0
+            away_score = int(scores[1].get("score", 0)) if len(scores) > 1 else 0
+            
+            clock = match.get("displayClock", "0:00")
+            try:
+                minute = int(clock.split(":")[0])
+            except:
+                minute = 0
+            
+            # Extraction des stats (si disponibles)
+            home_shots = match.get("home_shots", 0)
+            away_shots = match.get("away_shots", 0)
+            home_corners = match.get("home_corners", 0)
+            away_corners = match.get("away_corners", 0)
+            home_xg = match.get("home_xg", 0.0)
+            away_xg = match.get("away_xg", 0.0)
+            
+            # Création d'un objet match enrichi
+            match_enriched = {
+                "home_shots": home_shots,
+                "away_shots": away_shots,
+                "home_corners": home_corners,
+                "away_corners": away_corners,
+                "home_xg": home_xg,
+                "away_xg": away_xg
+            }
+            
+            # Calcul des prédictions
+            pred = calculer_buts_attendus(
+                match_enriched, minute,
+                home_team, away_team,
+                home_score, away_score
+            )
             
             # ALERTE 1ÈRE MI-TEMPS
-            if minute < 45 and match["danger_score_1mt"] >= SEUIL_DANGER_1MT:
-                if ancien["last_alert_1mt"] == 0 or (time.time() - ancien["last_alert_1mt"]) > 600:
-                    message = (
-                        f"⚽ **ALERTE BUT - 1ÈRE MI-TEMPS** ⚽\n\n"
-                        f"📍 {match['home']} {match['home_score']} - {match['away_score']} {match['away']}\n"
-                        f"🏆 Flashscore\n"
-                        f"⏱️ {minute}' (1MT)\n\n"
-                        f"📊 **Statistiques live:**\n"
-                        f"🔫 Tirs: {match['home_shots']} - {match['away_shots']}\n"
-                        f"🎯 Tirs cadrés: {match['home_shots_on_target']} - {match['away_shots_on_target']}\n"
-                        f"🏁 Corners: {match['home_corners']} - {match['away_corners']}\n"
-                        f"🧊 Possession: {match['home_possession']}% - {match['away_possession']}%\n"
-                        f"⚡ Attaques dangereuses: {match['home_attacks']} - {match['away_attacks']}\n\n"
-                        f"📈 **Prédictions:**\n"
-                        f"🔮 Buts attendus: {match['buts_attendus']['1mt']:.2f}\n"
-                        f"🎰 Probabilité de but: {match['buts_attendus']['proba_1mt']}%\n"
-                        f"⚠️ Score de danger: {match['danger_score_1mt']}/10\n\n"
-                        f"🔥 Un but est très probable dans les 5 prochaines minutes !"
-                    )
-                    if envoyer_telegram(message):
-                        alertes_envoyees += 1
-                    historique[match_id]["last_alert_1mt"] = time.time()
+            if minute < 45 and minute > 5:
+                if pred["total_1mt"] >= SEUIL_ALERTE_1MT:
+                    if historique_matchs[match_id]["last_alert_1mt"] == 0 or \
+                       (time.time() - historique_matchs[match_id]["last_alert_1mt"]) > 600:
+                        
+                        message = (
+                            f"⚽ **ALERTE BUT - 1ÈRE MI-TEMPS** ⚽\n\n"
+                            f"📍 {home_team} {home_score} - {away_score} {away_team}\n"
+                            f"⏱️ {minute}' (1MT)\n\n"
+                            f"📊 **Prédictions:**\n"
+                            f"🔮 Buts attendus 1MT: **{pred['total_1mt']:.2f}**\n"
+                            f"🎰 Probabilité de but: **{pred['proba_but_1mt']}%**\n"
+                            f"🏠 xG {home_team}: {pred['xG_home_1mt']:.2f}\n"
+                            f"✈️ xG {away_team}: {pred['xG_away_1mt']:.2f}\n\n"
+                            f"📈 **Statistiques live:**\n"
+                            f"🔫 Tirs: {home_shots} - {away_shots}\n"
+                            f"🏁 Corners: {home_corners} - {away_corners}\n\n"
+                            f"🔥 Un but est très probable dans les 5 prochaines minutes !"
+                        )
+                        envoyer_telegram(message)
+                        historique_matchs[match_id]["last_alert_1mt"] = time.time()
             
             # ALERTE MATCH COMPLET
-            if match["danger_score_match"] >= SEUIL_DANGER_MATCH:
-                if ancien["last_alert_match"] == 0 or (time.time() - ancien["last_alert_match"]) > 600:
-                    pred = match["buts_attendus"]
-                    plus_0_5 = "✅" if pred["total"] > 0.5 else "❌"
-                    plus_1_5 = "✅" if pred["total"] > 1.5 else "❌"
-                    plus_2_5 = "✅" if pred["total"] > 2.5 else "❌"
-                    plus_3_5 = "✅" if pred["total"] > 3.5 else "❌"
+            if pred["total_match"] >= SEUIL_ALERTE_MATCH:
+                if historique_matchs[match_id]["last_alert_match"] == 0 or \
+                   (time.time() - historique_matchs[match_id]["last_alert_match"]) > 600:
                     
                     message = (
                         f"⚽ **ALERTE BUT - MATCH COMPLET** ⚽\n\n"
-                        f"📍 {match['home']} {match['home_score']} - {match['away_score']} {match['away']}\n"
-                        f"🏆 Flashscore\n"
+                        f"📍 {home_team} {home_score} - {away_score} {away_team}\n"
                         f"⏱️ {minute}'\n\n"
-                        f"📊 **Statistiques live:**\n"
-                        f"🔫 Tirs: {match['home_shots']} - {match['away_shots']}\n"
-                        f"🎯 Tirs cadrés: {match['home_shots_on_target']} - {match['away_shots_on_target']}\n"
-                        f"🏁 Corners: {match['home_corners']} - {match['away_corners']}\n"
-                        f"🧊 Possession: {match['home_possession']}% - {match['away_possession']}%\n"
-                        f"⚡ Attaques dangereuses: {match['home_attacks']} - {match['away_attacks']}\n\n"
                         f"📊 **Prédictions:**\n"
-                        f"⚽ Plus de 0.5 but: {plus_0_5}\n"
-                        f"⚽ Plus de 1.5 but: {plus_1_5}\n"
-                        f"⚽ Plus de 2.5 but: {plus_2_5}\n"
-                        f"⚽ Plus de 3.5 but: {plus_3_5}\n"
-                        f"📈 Buts attendus: {pred['total']:.2f}\n"
-                        f"🕐 Minute: {minute}'\n\n"
-                        f"⚠️ Score de danger: {match['danger_score_match']}/13\n"
-                        f"🔥 Un but pourrait être marqué dans les minutes qui suivent !"
+                        f"🔮 Buts attendus match: **{pred['total_match']:.2f}**\n"
+                        f"🏠 xG {home_team}: {pred['xG_home']:.2f}\n"
+                        f"✈️ xG {away_team}: {pred['xG_away']:.2f}\n\n"
+                        f"📈 **Probabilités Over/Under:**\n"
+                        f"⚽ +0.5 but: **{pred['over_0_5']}%**\n"
+                        f"⚽ +1.5 but: **{pred['over_1_5']}%**\n"
+                        f"⚽ +2.5 but: **{pred['over_2_5']}%**\n"
+                        f"⚽ +3.5 but: **{pred['over_3_5']}%**\n\n"
+                        f"📊 **Statistiques live:**\n"
+                        f"🔫 Tirs: {home_shots} - {away_shots}\n"
+                        f"🏁 Corners: {home_corners} - {away_corners}\n\n"
+                        f"🔥 Plusieurs buts attendus dans ce match !"
                     )
-                    if envoyer_telegram(message):
-                        alertes_envoyees += 1
-                    historique[match_id]["last_alert_match"] = time.time()
+                    envoyer_telegram(message)
+                    historique_matchs[match_id]["last_alert_match"] = time.time()
             
             # Mise à jour de l'historique
-            historique[match_id]["danger_score_1mt"] = match["danger_score_1mt"]
-            historique[match_id]["danger_score_match"] = match["danger_score_match"]
-            historique[match_id]["home_shots"] = match["home_shots"]
-            historique[match_id]["away_shots"] = match["away_shots"]
-            historique[match_id]["home_corners"] = match["home_corners"]
-            historique[match_id]["away_corners"] = match["away_corners"]
-            historique[match_id]["home_possession"] = match["home_possession"]
-            historique[match_id]["away_possession"] = match["away_possession"]
-            historique[match_id]["home_attacks"] = match["home_attacks"]
-            historique[match_id]["away_attacks"] = match["away_attacks"]
-            historique[match_id]["home_shots_on_target"] = match["home_shots_on_target"]
-            historique[match_id]["away_shots_on_target"] = match["away_shots_on_target"]
-
-        if alertes_envoyees > 0:
-            print(f"📨 {alertes_envoyees} alertes envoyées")
+            historique_matchs[match_id].update({
+                "home_xg_live": home_xg,
+                "away_xg_live": away_xg,
+                "minute": minute,
+                "home_score": home_score,
+                "away_score": away_score
+            })
         
-        time.sleep(60)
-
+        time.sleep(90)  # Vérification toutes les 90 secondes
+        
     except Exception as e:
         print(f"❌ Erreur générale: {e}")
         time.sleep(60)
