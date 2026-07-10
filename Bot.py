@@ -6,12 +6,49 @@ from collections import defaultdict
 
 # ======================= CONFIGURATION =======================
 TELEGRAM_TOKEN = "8829107151:AAG1JLV9-7AI-H6wugq3YaNE2IIqlrZyxuk"
-       # Ton token BotFather
-CHAT_ID = "810719713"              # Ton ID Telegram
+"           # Ton token BotFather
+CHAT_ID = "810719713"               # Ton ID Telegram
 ODDS_API_KEY = "d701b89123f5ca8450aeb968456fe372"  # Ta clé
 SEUIL_ALERTE_1MT = 0.60
 SEUIL_ALERTE_MATCH = 1.20
 # =============================================================
+
+# Liste des sports à surveiller (tous les foots possibles)
+SPORTS = [
+    "soccer_epl",          # Premier League (Angleterre)
+    "soccer_eng_league1",  # League 1 (Angleterre)
+    "soccer_eng_league2",  # League 2 (Angleterre)
+    "soccer_spain_la_liga",
+    "soccer_spain_segunda_division",
+    "soccer_italy_serie_a",
+    "soccer_italy_serie_b",
+    "soccer_germany_bundesliga",
+    "soccer_germany_bundesliga2",
+    "soccer_france_ligue_one",
+    "soccer_france_ligue_two",
+    "soccer_netherlands_eredivisie",
+    "soccer_portugal_primeira_liga",
+    "soccer_brazil_campeonato",
+    "soccer_brazil_serie_b",
+    "soccer_argentina_primera_division",
+    "soccer_mexico_ligamx",
+    "soccer_usa_mls",
+    "soccer_australia_aleague",
+    "soccer_japan_j_league",
+    "soccer_china_superleague",
+    "soccer_india_isl",
+    "soccer_uefa_champions_league",
+    "soccer_uefa_europa_league",
+    "soccer_uefa_europa_conference_league",
+    "soccer_fifa_world_cup",
+    "soccer_uefa_euro",
+    "soccer_conmebol_copa_america",
+    "soccer_concacaf_gold_cup",
+    "soccer_africa_cup_of_nations",
+    "soccer_afc_asian_cup",
+    "soccer_friendly",
+    "soccer_friendly_women",
+]
 
 historique_matchs = defaultdict(lambda: {
     "last_alert_1mt": 0,
@@ -28,49 +65,37 @@ def envoyer_telegram(message):
         print(f"❌ Erreur envoi: {e}")
         return False
 
-def get_live_scores():
-    """Récupère les matchs en direct avec gestion d'erreur"""
-    url = "https://api.the-odds-api.com/v4/sports/soccer/scores"
+def get_live_scores_for_sport(sport):
+    """Récupère les matchs en direct pour un sport spécifique"""
+    url = f"https://api.the-odds-api.com/v4/sports/{sport}/scores"
     params = {"apiKey": ODDS_API_KEY}
     
     try:
-        response = requests.get(url, params=params, timeout=15)
+        response = requests.get(url, params=params, timeout=10)
         
-        # 🔍 DIAGNOSTIC : Affiche le statut et le début de la réponse
-        print(f"📡 Statut HTTP: {response.status_code}")
-        print(f"📄 Contenu brut (début): {response.text[:200]}")
-        
-        # Si le statut n'est pas 200, on affiche l'erreur
         if response.status_code != 200:
-            print(f"❌ Erreur API: {response.text}")
+            print(f"⚠️ {sport}: HTTP {response.status_code}")
             return []
         
         data = response.json()
-        
-        # Si c'est une chaîne, on affiche l'erreur
-        if isinstance(data, str):
-            print(f"❌ Réponse string: {data}")
-            return []
-        
-        # Si c'est un dict avec une erreur
-        if isinstance(data, dict) and data.get("error"):
-            print(f"❌ Erreur API: {data.get('error')}")
-            return []
-        
-        # Si c'est une liste, on la retourne
         if isinstance(data, list):
-            print(f"📊 {len(data)} matchs récupérés")
             return data
-        else:
-            print(f"⚠️ Type inattendu: {type(data)}")
-            return []
-            
-    except requests.exceptions.RequestException as e:
-        print(f"❌ Erreur requête: {e}")
         return []
-    except json.JSONDecodeError as e:
-        print(f"❌ Erreur JSON: {e}")
+    except:
         return []
+
+def get_all_live_scores():
+    """Récupère les matchs en direct pour TOUS les sports"""
+    all_matches = []
+    
+    for sport in SPORTS:
+        matchs = get_live_scores_for_sport(sport)
+        if matchs:
+            print(f"📊 {sport}: {len(matchs)} matchs")
+            all_matches.extend(matchs)
+        time.sleep(0.5)  # Pause pour éviter le rate limiting
+    
+    return all_matches
 
 def get_team_stats(team_name):
     """Simule des stats historiques"""
@@ -83,7 +108,7 @@ def get_head_to_head(team1, team2):
     import random
     return round(random.uniform(1.5, 3.5), 2)
 
-def calculer_buts_attendus(match, minute, home_team, away_team):
+def calculer_buts_attendus(match, minute, home_team, away_team, match_id):
     """Calcule les buts attendus"""
     xg_live_home = match.get("home_xg", 0.0)
     xg_live_away = match.get("away_xg", 0.0)
@@ -93,6 +118,17 @@ def calculer_buts_attendus(match, minute, home_team, away_team):
         away_shots = match.get("away_shots", 0)
         home_corners = match.get("home_corners", 0)
         away_corners = match.get("away_corners", 0)
+        
+        # Extraction des stats depuis les autres champs possibles
+        if "statistics" in match:
+            for stat in match.get("statistics", []):
+                if stat.get("type") == "Shots on Goal":
+                    home_shots = int(stat.get("home", 0))
+                    away_shots = int(stat.get("away", 0))
+                elif stat.get("type") == "Corner Kicks":
+                    home_corners = int(stat.get("home", 0))
+                    away_corners = int(stat.get("away", 0))
+        
         xg_live_home = home_shots * 0.10 + home_corners * 0.03
         xg_live_away = away_shots * 0.10 + away_corners * 0.03
     
@@ -138,10 +174,12 @@ def calculer_buts_attendus(match, minute, home_team, away_team):
     }
 
 print("🤖 Bot lancé - Prédictions de buts (Poisson + xG + Historique)")
+print(f"📡 Surveillance de {len(SPORTS)} compétitions")
 
 while True:
     try:
-        matchs = get_live_scores()
+        matchs = get_all_live_scores()
+        print(f"📊 {len(matchs)} matchs en direct récupérés")
         
         if not matchs:
             print("⏳ Aucun match récupéré, nouvelle tentative dans 60s...")
@@ -170,21 +208,31 @@ while True:
                 minute = 0
             
             # Statistiques
-            home_shots = match.get("home_shots", 0)
-            away_shots = match.get("away_shots", 0)
-            home_corners = match.get("home_corners", 0)
-            away_corners = match.get("away_corners", 0)
+            home_shots = 0
+            away_shots = 0
+            home_corners = 0
+            away_corners = 0
+            
+            if "statistics" in match:
+                for stat in match.get("statistics", []):
+                    stat_type = stat.get("type", "")
+                    if stat_type == "Shots on Goal":
+                        home_shots = int(stat.get("home", 0))
+                        away_shots = int(stat.get("away", 0))
+                    elif stat_type == "Corner Kicks":
+                        home_corners = int(stat.get("home", 0))
+                        away_corners = int(stat.get("away", 0))
             
             match_enriched = {
                 "home_shots": home_shots,
                 "away_shots": away_shots,
                 "home_corners": home_corners,
                 "away_corners": away_corners,
-                "home_xg": match.get("home_xg", 0.0),
-                "away_xg": match.get("away_xg", 0.0)
+                "home_xg": 0.0,
+                "away_xg": 0.0
             }
             
-            pred = calculer_buts_attendus(match_enriched, minute, home_team, away_team)
+            pred = calculer_buts_attendus(match_enriched, minute, home_team, away_team, match_id)
             
             # ALERTE 1ÈRE MI-TEMPS
             if minute < 45 and minute > 5:
@@ -229,7 +277,7 @@ while True:
                     envoyer_telegram(message)
                     historique_matchs[match_id]["last_alert_match"] = time.time()
         
-        time.sleep(90)
+        time.sleep(120)
         
     except Exception as e:
         print(f"❌ Erreur générale: {e}")
