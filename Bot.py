@@ -1,31 +1,22 @@
 import requests
 import time
 import math
+import json
 from collections import defaultdict
-from datetime import datetime, timedelta
 
 # ======================= CONFIGURATION =======================
-TELEGRAM_TOKEN = "8829107151:AAG1JLV9-7AI-H6wugq3YaNE2IIqlrZyxuk"       # Ton token BotFather
-CHAT_ID = "810719713"               # Ton ID Telegram
-ODDS_API_KEY = "d701b89123f5ca8450aeb968456fe372"  # Ta clé The Odds API
-
-# Seuils d'alerte (ajustables)
-SEUIL_ALERTE_1MT = 0.60   # Buts attendus en 1MT pour déclencher une alerte
-SEUIL_ALERTE_MATCH = 1.20 # Buts attendus match pour déclencher une alerte
+TELEGRAM_TOKEN = "8829107151:AAG1JLV9-7AI-H6wugq3YaNE2IIqlrZyxuk"
+       # Ton token BotFather
+CHAT_ID = "810719713"              # Ton ID Telegram
+ODDS_API_KEY = "d701b89123f5ca8450aeb968456fe372"  # Ta clé
+SEUIL_ALERTE_1MT = 0.60
+SEUIL_ALERTE_MATCH = 1.20
 # =============================================================
 
 historique_matchs = defaultdict(lambda: {
-    "home_xg_live": 0.0,
-    "away_xg_live": 0.0,
-    "minute": 0,
     "last_alert_1mt": 0,
     "last_alert_match": 0,
-    "home_score": 0,
-    "away_score": 0
 })
-
-# Cache pour les stats historiques des équipes
-cache_equipes = {}
 
 def envoyer_telegram(message):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
@@ -38,141 +29,112 @@ def envoyer_telegram(message):
         return False
 
 def get_live_scores():
-    """Récupère les matchs en direct via The Odds API (endpoint gratuit)"""
+    """Récupère les matchs en direct avec gestion d'erreur"""
     url = "https://api.the-odds-api.com/v4/sports/soccer/scores"
-    params = {"apiKey": ODDS_API_KEY, "daysFrom": "1"}
+    params = {"apiKey": ODDS_API_KEY}
+    
     try:
         response = requests.get(url, params=params, timeout=15)
-        return response.json()
-    except Exception as e:
-        print(f"❌ Erreur scores: {e}")
+        
+        # 🔍 DIAGNOSTIC : Affiche le statut et le début de la réponse
+        print(f"📡 Statut HTTP: {response.status_code}")
+        print(f"📄 Contenu brut (début): {response.text[:200]}")
+        
+        # Si le statut n'est pas 200, on affiche l'erreur
+        if response.status_code != 200:
+            print(f"❌ Erreur API: {response.text}")
+            return []
+        
+        data = response.json()
+        
+        # Si c'est une chaîne, on affiche l'erreur
+        if isinstance(data, str):
+            print(f"❌ Réponse string: {data}")
+            return []
+        
+        # Si c'est un dict avec une erreur
+        if isinstance(data, dict) and data.get("error"):
+            print(f"❌ Erreur API: {data.get('error')}")
+            return []
+        
+        # Si c'est une liste, on la retourne
+        if isinstance(data, list):
+            print(f"📊 {len(data)} matchs récupérés")
+            return data
+        else:
+            print(f"⚠️ Type inattendu: {type(data)}")
+            return []
+            
+    except requests.exceptions.RequestException as e:
+        print(f"❌ Erreur requête: {e}")
+        return []
+    except json.JSONDecodeError as e:
+        print(f"❌ Erreur JSON: {e}")
         return []
 
-def get_team_stats(team_name, league_id=None):
-    """
-    Récupère les stats historiques d'une équipe (xG moyen sur 5 matchs)
-    Utilise un cache pour éviter les appels répétés
-    """
-    cache_key = f"{team_name}_{league_id}"
-    if cache_key in cache_equipes:
-        return cache_equipes[cache_key]
-    
-    # Ici, on simule des valeurs pour l'exemple
-    # Dans une version réelle, on appellerait API-Football ou Sportmonks
+def get_team_stats(team_name):
+    """Simule des stats historiques"""
     import random
-    xg_moyen = round(random.uniform(0.8, 2.2), 2)
-    resultat = {
-        "xg_moyen": xg_moyen,
-        "xg_domicile": round(xg_moyen * 1.15, 2),
-        "xg_exterieur": round(xg_moyen * 0.85, 2)
-    }
-    cache_equipes[cache_key] = resultat
-    return resultat
+    xg = round(random.uniform(0.8, 2.2), 2)
+    return {"xg_moyen": xg, "xg_domicile": round(xg * 1.15, 2), "xg_exterieur": round(xg * 0.85, 2)}
 
 def get_head_to_head(team1, team2):
-    """
-    Récupère l'historique des confrontations directes
-    Retourne la moyenne de buts dans ces matchs
-    """
-    # Simulation pour l'exemple
+    """Simule un historique de confrontations"""
     import random
     return round(random.uniform(1.5, 3.5), 2)
 
-def calculer_buts_attendus(match, minute, home_team, away_team, home_score, away_score):
-    """
-    Calcule les buts attendus en 1MT et dans le match complet
-    Basé sur xG live, historique équipes, confrontations directes
-    """
-    # 1. xG live du match (depuis l'API) - 40% du poids
+def calculer_buts_attendus(match, minute, home_team, away_team):
+    """Calcule les buts attendus"""
     xg_live_home = match.get("home_xg", 0.0)
     xg_live_away = match.get("away_xg", 0.0)
     
     if xg_live_home == 0 and xg_live_away == 0:
-        # Si pas de xG live, on estime depuis les tirs/corners
         home_shots = match.get("home_shots", 0)
         away_shots = match.get("away_shots", 0)
         home_corners = match.get("home_corners", 0)
         away_corners = match.get("away_corners", 0)
-        
         xg_live_home = home_shots * 0.10 + home_corners * 0.03
         xg_live_away = away_shots * 0.10 + away_corners * 0.03
     
-    # 2. Stats historiques des équipes (moyenne xG) - 30% du poids
     stats_home = get_team_stats(home_team)
     stats_away = get_team_stats(away_team)
-    
-    # Ajustement domicile/extérieur
-    xg_hist_home = stats_home.get("xg_domicile", 1.2)
-    xg_hist_away = stats_away.get("xg_exterieur", 1.0)
-    
-    # 3. Confrontations directes - 20% du poids
     h2h_avg = get_head_to_head(home_team, away_team)
-    h2h_home = h2h_avg * 0.55
-    h2h_away = h2h_avg * 0.45
     
-    # 4. Avantage domicile - 10% du poids
-    home_advantage = 0.15  # 15% d'augmentation pour l'équipe à domicile
-    
-    # Calcul des xG prédits pour le match complet
-    xG_home_match = (
+    xg_home_match = (
         xg_live_home * 0.40 +
-        xg_hist_home * 0.30 +
-        h2h_home * 0.20 +
-        (xg_hist_home * home_advantage) * 0.10
+        stats_home["xg_domicile"] * 0.30 +
+        h2h_avg * 0.20 +
+        stats_home["xg_domicile"] * 0.10
     )
     
-    xG_away_match = (
+    xg_away_match = (
         xg_live_away * 0.40 +
-        xg_hist_away * 0.30 +
-        h2h_away * 0.20
+        stats_away["xg_exterieur"] * 0.30 +
+        h2h_avg * 0.20
     )
     
-    # Ajustement basé sur le temps écoulé (extrapolation sur 90 min)
     if minute > 0 and minute < 90:
-        temps_restant = (90 - minute) / 90
-        facteur_extrapolation = 1 / (minute / 90) if minute > 0 else 1
-        xG_home_match = xG_home_match * facteur_extrapolation * 0.8 + xG_home_match * 0.2
-        xG_away_match = xG_away_match * facteur_extrapolation * 0.8 + xG_away_match * 0.2
+        facteur_extrapolation = 90 / minute if minute > 0 else 1
+        xg_home_match = xg_home_match * min(facteur_extrapolation, 2.5)
+        xg_away_match = xg_away_match * min(facteur_extrapolation, 2.5)
     
-    # Calcul pour la 1ère mi-temps (extrapolation sur 45 min)
     if minute < 45:
-        temps_ecoule_1mt = minute / 45 if minute > 0 else 0
-        xG_home_1mt = xG_home_match * (temps_ecoule_1mt + 0.3)
-        xG_away_1mt = xG_away_match * (temps_ecoule_1mt + 0.3)
+        xg_home_1mt = xg_home_match * (minute / 45 + 0.3) if minute > 0 else 0
+        xg_away_1mt = xg_away_match * (minute / 45 + 0.3) if minute > 0 else 0
     else:
-        xG_home_1mt = 0
-        xG_away_1mt = 0
+        xg_home_1mt = 0
+        xg_away_1mt = 0
     
-    # Calcul de la probabilité de but (distribution de Poisson)
-    def proba_au_moins_un_but(xG):
-        return 1 - math.exp(-xG)
-    
-    total_buts_attendus_match = xG_home_match + xG_away_match
-    total_buts_attendus_1mt = xG_home_1mt + xG_away_1mt
-    
-    proba_but_1mt = proba_au_moins_un_but(total_buts_attendus_1mt)
-    
-    # Prédiction du nombre de buts (Over/Under)
-    def predict_over(xG, line):
-        return 1 - sum(math.exp(-xG) * (xG ** k) / math.factorial(k) for k in range(int(line) + 1))
-    
-    over_0_5 = predict_over(total_buts_attendus_match, 0.5)
-    over_1_5 = predict_over(total_buts_attendus_match, 1.5)
-    over_2_5 = predict_over(total_buts_attendus_match, 2.5)
-    over_3_5 = predict_over(total_buts_attendus_match, 3.5)
+    total_match = xg_home_match + xg_away_match
+    total_1mt = xg_home_1mt + xg_away_1mt
     
     return {
-        "xG_home": round(xG_home_match, 2),
-        "xG_away": round(xG_away_match, 2),
-        "total_match": round(total_buts_attendus_match, 2),
-        "xG_home_1mt": round(xG_home_1mt, 2),
-        "xG_away_1mt": round(xG_away_1mt, 2),
-        "total_1mt": round(total_buts_attendus_1mt, 2),
-        "proba_but_1mt": round(proba_but_1mt * 100, 1),
-        "over_0_5": round(over_0_5 * 100, 1),
-        "over_1_5": round(over_1_5 * 100, 1),
-        "over_2_5": round(over_2_5 * 100, 1),
-        "over_3_5": round(over_3_5 * 100, 1)
+        "xG_home": round(xg_home_match, 2),
+        "xG_away": round(xg_away_match, 2),
+        "total_match": round(total_match, 2),
+        "xG_home_1mt": round(xg_home_1mt, 2),
+        "xG_away_1mt": round(xg_away_1mt, 2),
+        "total_1mt": round(total_1mt, 2),
     }
 
 print("🤖 Bot lancé - Prédictions de buts (Poisson + xG + Historique)")
@@ -180,12 +142,18 @@ print("🤖 Bot lancé - Prédictions de buts (Poisson + xG + Historique)")
 while True:
     try:
         matchs = get_live_scores()
-        print(f"📊 {len(matchs)} matchs récupérés")
+        
+        if not matchs:
+            print("⏳ Aucun match récupéré, nouvelle tentative dans 60s...")
+            time.sleep(60)
+            continue
         
         for match in matchs:
             match_id = match.get("id")
-            status = match.get("status", "")
+            if not match_id:
+                continue
             
+            status = match.get("status", "")
             if status != "in":
                 continue
             
@@ -201,30 +169,22 @@ while True:
             except:
                 minute = 0
             
-            # Extraction des stats (si disponibles)
+            # Statistiques
             home_shots = match.get("home_shots", 0)
             away_shots = match.get("away_shots", 0)
             home_corners = match.get("home_corners", 0)
             away_corners = match.get("away_corners", 0)
-            home_xg = match.get("home_xg", 0.0)
-            away_xg = match.get("away_xg", 0.0)
             
-            # Création d'un objet match enrichi
             match_enriched = {
                 "home_shots": home_shots,
                 "away_shots": away_shots,
                 "home_corners": home_corners,
                 "away_corners": away_corners,
-                "home_xg": home_xg,
-                "away_xg": away_xg
+                "home_xg": match.get("home_xg", 0.0),
+                "away_xg": match.get("away_xg", 0.0)
             }
             
-            # Calcul des prédictions
-            pred = calculer_buts_attendus(
-                match_enriched, minute,
-                home_team, away_team,
-                home_score, away_score
-            )
+            pred = calculer_buts_attendus(match_enriched, minute, home_team, away_team)
             
             # ALERTE 1ÈRE MI-TEMPS
             if minute < 45 and minute > 5:
@@ -238,10 +198,9 @@ while True:
                             f"⏱️ {minute}' (1MT)\n\n"
                             f"📊 **Prédictions:**\n"
                             f"🔮 Buts attendus 1MT: **{pred['total_1mt']:.2f}**\n"
-                            f"🎰 Probabilité de but: **{pred['proba_but_1mt']}%**\n"
                             f"🏠 xG {home_team}: {pred['xG_home_1mt']:.2f}\n"
                             f"✈️ xG {away_team}: {pred['xG_away_1mt']:.2f}\n\n"
-                            f"📈 **Statistiques live:**\n"
+                            f"📈 **Statistiques:**\n"
                             f"🔫 Tirs: {home_shots} - {away_shots}\n"
                             f"🏁 Corners: {home_corners} - {away_corners}\n\n"
                             f"🔥 Un but est très probable dans les 5 prochaines minutes !"
@@ -262,29 +221,15 @@ while True:
                         f"🔮 Buts attendus match: **{pred['total_match']:.2f}**\n"
                         f"🏠 xG {home_team}: {pred['xG_home']:.2f}\n"
                         f"✈️ xG {away_team}: {pred['xG_away']:.2f}\n\n"
-                        f"📈 **Probabilités Over/Under:**\n"
-                        f"⚽ +0.5 but: **{pred['over_0_5']}%**\n"
-                        f"⚽ +1.5 but: **{pred['over_1_5']}%**\n"
-                        f"⚽ +2.5 but: **{pred['over_2_5']}%**\n"
-                        f"⚽ +3.5 but: **{pred['over_3_5']}%**\n\n"
-                        f"📊 **Statistiques live:**\n"
+                        f"📈 **Statistiques:**\n"
                         f"🔫 Tirs: {home_shots} - {away_shots}\n"
                         f"🏁 Corners: {home_corners} - {away_corners}\n\n"
                         f"🔥 Plusieurs buts attendus dans ce match !"
                     )
                     envoyer_telegram(message)
                     historique_matchs[match_id]["last_alert_match"] = time.time()
-            
-            # Mise à jour de l'historique
-            historique_matchs[match_id].update({
-                "home_xg_live": home_xg,
-                "away_xg_live": away_xg,
-                "minute": minute,
-                "home_score": home_score,
-                "away_score": away_score
-            })
         
-        time.sleep(90)  # Vérification toutes les 90 secondes
+        time.sleep(90)
         
     except Exception as e:
         print(f"❌ Erreur générale: {e}")
